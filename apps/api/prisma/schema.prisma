@@ -1,0 +1,15 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Infrastructure marker only. Clinical models arrive with authentication and RLS.
+model SystemCheck {
+  id        String   @id
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+}

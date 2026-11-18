@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+:root { --background: #f5f7f8; --surface: #fff; --ink: #152f36; --muted: #536970; --border: #dce5e7; --accent: #146b5b; --accent-light: #e9f5ef; --pending: #805b19; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background); color: var(--ink); font-family: Arial, Helvetica, sans-serif; }
+.workspace { max-width: 1160px; margin: 0 auto; padding: 0 36px; }
+.masthead { display: flex; align-items: center; justify-content: space-between; min-height: 100px; border-bottom: 1px solid var(--border); }
+.brand { color: var(--ink); font-size: 25px; font-weight: 800; text-decoration: none; letter-spacing: -1px; }
+.brand span { color: var(--accent); padding: 0 4px; }
+.environment { font-size: 12px; padding: 9px 14px; border: 1px solid var(--border); border-radius: 20px; }
+.intro { padding: 70px 0 42px; }
+.eyebrow { color: var(--accent); font-size: 10px; letter-spacing: 1.8px; font-weight: 700; margin: 0 0 16px; }
+h1 { font-size: clamp(32px, 4.7vw, 55px); line-height: 1.12; letter-spacing: -2px; font-weight: 600; margin: 0 0 22px; }
+.description { max-width: 620px; font-size: 16px; line-height: 1.7; color: var(--muted); }
+.connection-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.panel-heading { padding: 30px; display: flex; gap: 20px; align-items: center; justify-content: space-between; }
+.panel-heading .eyebrow { margin-bottom: 10px; }
+h2 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -.5px; }
+button { border: 1px solid var(--border); background: var(--surface); color: var(--ink); border-radius: 7px; padding: 11px 16px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+button:hover { border-color: var(--accent); }
+button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+button:disabled { opacity: .6; cursor: wait; }
+.services { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--border); }
+.service { padding: 27px 30px; }
+.service + .service { border-left: 1px solid var(--border); }
+.service-number { font-size: 11px; color: var(--muted); }
+h3 { font-size: 20px; font-weight: 600; margin: 18px 0 7px; }
+.service p { font-size: 12px; color: var(--muted); margin: 0 0 22px; }
+.status { display: inline-block; font-size: 12px; border-radius: 5px; padding: 6px 9px; }
+.status span { font-size: 9px; margin-right: 5px; }
+.connected { background: var(--accent-light); color: var(--accent); }
+.pending { color: var(--pending); background: var(--background); }
+.connection-note { padding: 16px 30px; border-top: 1px solid var(--border); font-size: 12px; line-height: 1.6; color: var(--muted); }
+.next-steps { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; padding: 42px 0; }
+.next-steps p:last-child { color: var(--muted); line-height: 1.8; font-size: 13px; margin: 0; }
+footer { padding: 24px 0; border-top: 1px solid var(--border); display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+@media (max-width: 650px) { .workspace { padding: 0 20px; } .masthead { min-height: 80px; } .intro { padding-top: 42px; } h1 { letter-spacing: -1px; } .panel-heading { align-items: flex-start; padding: 22px; flex-direction: column; } .services, .next-steps { grid-template-columns: 1fr; } .service { padding: 22px; } .service + .service { border-left: 0; border-top: 1px solid var(--border); } .next-steps { gap: 20px; } footer { gap: 20px; } }

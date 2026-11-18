@@ -1,0 +1,5 @@
+CREATE TABLE "SystemCheck" (
+    "id" TEXT NOT NULL,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "SystemCheck_pkey" PRIMARY KEY ("id")
+);

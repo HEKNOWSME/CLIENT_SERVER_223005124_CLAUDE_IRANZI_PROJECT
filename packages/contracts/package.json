@@ -1,0 +1,10 @@
+{
+  "name": "@pmrms/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": { "build": "tsc", "typecheck": "tsc --noEmit" },
+  "dependencies": { "zod": "^4.1.0" },
+  "devDependencies": { "@pmrms/typescript-config": "workspace:*", "typescript": "5.9.3" }
+}
