@@ -84,7 +84,8 @@ export class CsrfGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest<Request>();
     const origin = req.get('origin');
-    const allowedOrigins = [env.WEB_ORIGIN, `${req.protocol}://${req.get('host')}`];
+    // req.protocol and req.host honour X-Forwarded-* from the trusted loopback proxy (Next.js).
+    const allowedOrigins = [env.WEB_ORIGIN, `${req.protocol}://${req.host}`];
     if (req.get(CSRF_HEADER) !== '1' || (origin && !allowedOrigins.includes(origin))) {
       throw forbidden('Request failed cross-site request forgery checks.', 'CSRF_REJECTED');
     }

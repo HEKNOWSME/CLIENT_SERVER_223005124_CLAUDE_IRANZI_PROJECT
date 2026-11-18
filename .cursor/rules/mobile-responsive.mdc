@@ -1,0 +1,29 @@
+---
+description: Strict mobile-first responsive rules for every PMRMS web screen
+globs: apps/web/**/*.tsx
+alwaysApply: false
+---
+
+# Mobile first, always
+
+Every screen must work at **375px wide** before it is considered done, then scale up through `sm` (640), `md` (768), `lg` (1024), `xl` (1280).
+
+- Write the phone layout as the unprefixed classes and add breakpoints upward. Never design for desktop and patch mobile with `max-*`.
+
+```tsx
+// ❌ BAD – desktop-first, overflows on phones
+<div className="grid grid-cols-3 gap-8 max-md:grid-cols-1">
+// ✅ GOOD
+<div className="grid gap-4 sm:gap-6 md:grid-cols-3">
+```
+
+- Touch targets are at least 44px: use Button `md`/`lg` (`sm` only in dense desktop-only areas), and `min-h-11` on links and list rows.
+- Inputs use `inputClasses` (16px text on phones, which prevents iOS zoom). Never set input text below `text-base` on mobile.
+- No horizontal scrolling. Long values (emails, IDs, tokens) get `truncate`, `break-words` or `break-all`, and flex/grid children that hold text get `min-w-0`. A `truncate` or nowrap item inside a grid cell without `min-w-0` silently widens the column past the screen.
+- Navigation: sidebars become the off-canvas drawer in `AppShell` under `lg`, and public pages use the `SiteHeader` menu under `md`. Reuse them rather than building another menu.
+- Stack actions on phones (`flex-col sm:flex-row`) and use `fullWidth` buttons in narrow cards and forms.
+- Tables: on phones render rows as stacked cards (or wrap in `overflow-x-auto` with a sensible `min-w-*`). Never let a table push the page wide.
+- Use `min-h-dvh`, not `h-screen`. Page padding is `px-4 sm:px-6 lg:px-8`.
+- Respect the reduced-motion setting already in `globals.css`. Animations are short and never block content.
+
+Verify in the browser at 375px and at desktop width before finishing any UI change.

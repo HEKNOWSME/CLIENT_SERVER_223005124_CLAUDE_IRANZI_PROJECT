@@ -163,6 +163,20 @@ Security properties:
 | `patient.a@example.test` | PATIENT / ACTIVE | Own records |
 | `patient.b@example.test` | PATIENT / ACTIVE | Cross-patient denial |
 
+### 4.4 Web application
+
+| Route | Page |
+| --- | --- |
+| `/` | Landing page with live connection status |
+| `/login` | Sign in, then redirect to the role's workspace |
+| `/register` | Patient registration |
+| `/doctor/apply` | Doctor application (account stays pending) |
+| `/admin`, `/doctor`, `/patient` | Role workspaces with role-specific navigation |
+| `/admin/profile`, `/doctor/profile`, `/patient/profile` | Account details, sign out, sign out of all devices |
+| `/unauthorized` | Shown when a signed-in user opens another role's area |
+
+The browser keeps the access token in memory only and restores the session from the HttpOnly cookie after a reload. Token refreshes are serialised across tabs with the Web Locks API, so two tabs can never trigger refresh-token reuse detection. Signing out in one tab signs out every tab. Forms validate with the same Zod contracts as the API. Navigation for features that are not built yet is shown as disabled, and pending doctors see clinical items as locked. The UI is convenience only: every request is still authorised by the API.
+
 Seeded rows use readable fixed IDs, for example patient 1 is `20000000-0000-4000-8000-000000000001` and record 1 is `40000000-0000-4000-8000-000000000001`.
 
 ---
@@ -221,7 +235,22 @@ pnpm test:smoke     # frontend, proxy, database, CORS, OpenAPI and the full auth
 pnpm test:api       # readiness success / failure unit checks
 ```
 
-On the home page, **Workspace Status** should show Frontend, Backend and Database as connected after a live Prisma query.
+For a quick manual check, `http://127.0.0.1:3001/v1/health` should report the database and seed as ready.
+
+---
+
+## 7.1 Frontend conventions
+
+The web app is built from one shared component library, so new screens reuse existing pieces instead of copying markup:
+
+| Folder | Contents |
+| --- | --- |
+| `apps/web/components/ui/` | Primitives: Button, ButtonLink, TextField, PasswordField, FieldRow, Alert, Badge, Card, CardGrid, PageHeader, Section, DescriptionList, IconTile, EmptyState, ConfirmAction, Spinner |
+| `apps/web/components/layout/` | Page chrome: Brand, AppShell (mobile drawer), AuthLayout/AuthCard, SiteHeader, SiteFooter, NoticePage |
+| `apps/web/components/features/` | Domain components (auth forms, account, dashboard) |
+| `apps/web/lib/` | `useZodForm`, role and navigation config, API client, auth provider, `cn()` |
+
+Styling uses Tailwind 4 theme tokens defined in `apps/web/app/globals.css`. Every screen is mobile-first and is checked at 375px width. The rules agents follow are in `.cursor/rules/` (`project-conventions`, `frontend-components`, `mobile-responsive`).
 
 ---
 
@@ -270,8 +299,8 @@ These documents are the feature baseline for upcoming milestones.
 
 | Stage | Status | Deliverable |
 | --- | --- | --- |
-| 0 — Local foundation | **Done** | Monorepo, PostgreSQL, Prisma, health UI, OpenAPI |
-| 1 — Authentication | **Done** | JWT auth, rotating refresh sessions, Argon2id, roles, lockout, audit |
+| 0 — Local foundation | **Done** | Monorepo, PostgreSQL, Prisma, health checks, OpenAPI, shared UI component library |
+| 1 — Authentication | **Done** | JWT auth, rotating refresh sessions, Argon2id, roles, lockout, audit, sign-in/registration UI and role workspaces |
 | 2 — Clinical domain | In progress | Schema, constraints and seed **done**; records, assignments and admin APIs next |
 | 3 — Authorization & RLS | Planned | NestJS guards + PostgreSQL row-level security |
 | 4 — Documents | Planned | Private R2 PDFs and signed download links |

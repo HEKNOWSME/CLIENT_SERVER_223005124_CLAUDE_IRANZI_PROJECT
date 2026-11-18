@@ -1,0 +1,19 @@
+---
+description: PMRMS project layout, sources of truth and non-negotiables for every change
+alwaysApply: true
+---
+
+# PMRMS project conventions
+
+- Monorepo: `apps/api` (NestJS 11, Prisma 7, PostgreSQL), `apps/web` (Next.js 16, React 19, Tailwind 4), `packages/contracts` (Zod 4 schemas shared by both). Use pnpm, never npm/yarn.
+- Specs live in `docs/03`–`docs/08`. Read the relevant doc first; improve on it where it is weak, and update the doc when behaviour changes.
+- Request/response shapes are defined once in `packages/contracts` and imported by both apps. Never redeclare them.
+- Authorisation lives in the API (guards + service checks + DB constraints). The web UI may hide things but is never the security boundary.
+- Admins never read clinical content. Doctors only see actively assigned patients. Patients only see their own data.
+- All demo data is fictional (`@example.test`).
+- Next.js 16 uses `proxy.ts`, not `middleware.ts`.
+- Shell is Windows PowerShell 5.1: chain commands with `;`, not `&&`.
+
+Before finishing a change, run what applies: `pnpm typecheck`, `pnpm test:api`, `pnpm --filter @pmrms/web build`, `pnpm test:smoke` (with `pnpm dev` running).
+
+Frontend work must also follow `frontend-components.mdc` and `mobile-responsive.mdc`.

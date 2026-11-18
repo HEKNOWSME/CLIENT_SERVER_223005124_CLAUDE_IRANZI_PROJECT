@@ -1,0 +1,43 @@
+---
+description: Reusable component library and styling rules for the PMRMS web app
+globs: apps/web/**/*.tsx,apps/web/**/*.ts,apps/web/**/*.css
+alwaysApply: false
+---
+
+# Web components: reuse first, never repeat
+
+## Where things go
+- `components/ui/` – generic primitives (Button, ButtonLink, TextField, PasswordField, FieldRow, Alert, Badge, Card, CardGrid, PageHeader, Section, DescriptionList, IconTile, EmptyState, ConfirmAction, Spinner). Import from the barrel: `import { Button, Card } from '../../ui'`.
+- `components/layout/` – page chrome (Brand, AppShell, AuthLayout/AuthCard, SiteHeader, SiteFooter, NoticePage).
+- `components/features/<domain>/` – domain components (auth forms, account cards, dashboard, later records/patients…).
+- `lib/` – non-visual logic: `api.ts`, `auth.tsx`, `forms.ts` (`useZodForm`), `roles.ts` (labels, nav, role helpers), `cn.ts`.
+- `app/**/page.tsx` stays thin: metadata + composing layout/feature components.
+
+Before writing markup, check `components/ui` and `components/layout`. If a pattern appears a second time, extract it there instead of copying it.
+
+## Styling
+- Tailwind utilities with the theme tokens from `app/globals.css` only: `bg-canvas`, `bg-surface`, `text-ink`, `text-muted`, `border-line`, `brand-*`, `warning-*`, `danger-*`, `shadow-card`, `shadow-pop`. No hex colours, no new CSS classes, no inline `style`.
+- Join conditional classes with `cn()`. There is no tailwind-merge, so never pass a `className` that fights a component's own classes (size, colour, radius). Add a variant or prop instead:
+
+```tsx
+// ❌ BAD – conflicting classes, result depends on CSS order
+<ButtonLink className="bg-transparent text-white border-white/30">Apply</ButtonLink>
+// ✅ GOOD
+<ButtonLink variant="inverse-outline">Apply</ButtonLink>
+```
+
+- Icons come from `lucide-react` (`className="size-5" aria-hidden="true"`). Check that the icon exists in the installed version before using it.
+
+## Forms
+Use `useZodForm` with the shared contract schema plus `TextField`/`PasswordField`/`Alert`/`Button loading`. Do not hand-roll submit, validation or error-mapping state.
+
+```tsx
+const form = useZodForm({ schema: loginRequestSchema, read: d => ({ email: d.get('email'), password: d.get('password') }), submit: login });
+<form onSubmit={form.onSubmit} noValidate>…<TextField name="email" error={form.errors.email} /></form>
+```
+
+## Client vs server
+Only add `'use client'` when a component needs state, effects, browser APIs or `useAuth`. Keep static sections (homepage, notice pages) as server components.
+
+## Accessibility
+Every input has a visible label. Icon-only buttons need `aria-label`. Errors use `role="alert"`. Keep the visible focus ring.

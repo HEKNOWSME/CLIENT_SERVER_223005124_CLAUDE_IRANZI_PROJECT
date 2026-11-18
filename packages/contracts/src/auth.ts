@@ -7,7 +7,7 @@ export const verificationStatusSchema = z.enum(['PENDING', 'APPROVED', 'REJECTED
 export const PASSWORD_MIN_LENGTH = 12;
 export const PASSWORD_MAX_LENGTH = 128;
 
-export const emailSchema = z.string().trim().toLowerCase().max(255).pipe(z.email());
+export const emailSchema = z.string().trim().toLowerCase().max(255, 'Email must be at most 255 characters.').pipe(z.email('Enter a valid email address.'));
 
 export const passwordSchema = z.string()
   .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`)
@@ -16,13 +16,13 @@ export const passwordSchema = z.string()
   .regex(/[A-Z]/, 'Password must contain an uppercase letter.')
   .regex(/[0-9]/, 'Password must contain a digit.');
 
-const personNameSchema = z.string().trim().min(2).max(150);
+const personNameSchema = z.string().trim().min(2, 'Enter your full name.').max(150, 'Name must be at most 150 characters.');
 
 export const registerPatientRequestSchema = z.object({
   fullName: personNameSchema,
   email: emailSchema,
   password: passwordSchema,
-  birthDate: z.iso.date().refine(value => value >= '1900-01-01' && value <= new Date().toISOString().slice(0, 10), 'Birth date must be between 1900-01-01 and today.'),
+  birthDate: z.iso.date('Enter your date of birth.').refine(value => value >= '1900-01-01' && value <= new Date().toISOString().slice(0, 10), 'Birth date must be between 1900-01-01 and today.'),
   phone: z.string().trim().regex(/^\+?[0-9 ()-]{7,30}$/, 'Phone number format is invalid.').optional(),
 }).strict();
 
@@ -30,14 +30,14 @@ export const registerDoctorRequestSchema = z.object({
   fullName: personNameSchema,
   email: emailSchema,
   password: passwordSchema,
-  specialty: z.string().trim().min(2).max(120),
-  licenseNumber: z.string().trim().min(3).max(60).optional(),
+  specialty: z.string().trim().min(2, 'Enter your specialty.').max(120, 'Specialty must be at most 120 characters.'),
+  licenseNumber: z.string().trim().min(3, 'License number must be at least 3 characters.').max(60, 'License number must be at most 60 characters.').optional(),
 }).strict();
 
 export const loginRequestSchema = z.object({
   email: emailSchema,
   // Login only bounds the length; the strength policy applies when a password is set.
-  password: z.string().min(1).max(PASSWORD_MAX_LENGTH),
+  password: z.string().min(1, 'Enter your password.').max(PASSWORD_MAX_LENGTH, `Password must be at most ${PASSWORD_MAX_LENGTH} characters.`),
 }).strict();
 
 export const authUserSchema = z.object({
