@@ -1,0 +1,77 @@
+import { z } from 'zod';
+
+export const userRoleSchema = z.enum(['ADMIN', 'DOCTOR', 'PATIENT']);
+export const accountStatusSchema = z.enum(['ACTIVE', 'PENDING', 'SUSPENDED']);
+export const verificationStatusSchema = z.enum(['PENDING', 'APPROVED', 'REJECTED']);
+
+export const PASSWORD_MIN_LENGTH = 12;
+export const PASSWORD_MAX_LENGTH = 128;
+
+export const emailSchema = z.string().trim().toLowerCase().max(255).pipe(z.email());
+
+export const passwordSchema = z.string()
+  .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`)
+  .max(PASSWORD_MAX_LENGTH, `Password must be at most ${PASSWORD_MAX_LENGTH} characters.`)
+  .regex(/[a-z]/, 'Password must contain a lowercase letter.')
+  .regex(/[A-Z]/, 'Password must contain an uppercase letter.')
+  .regex(/[0-9]/, 'Password must contain a digit.');
+
+const personNameSchema = z.string().trim().min(2).max(150);
+
+export const registerPatientRequestSchema = z.object({
+  fullName: personNameSchema,
+  email: emailSchema,
+  password: passwordSchema,
+  birthDate: z.iso.date().refine(value => value >= '1900-01-01' && value <= new Date().toISOString().slice(0, 10), 'Birth date must be between 1900-01-01 and today.'),
+  phone: z.string().trim().regex(/^\+?[0-9 ()-]{7,30}$/, 'Phone number format is invalid.').optional(),
+}).strict();
+
+export const registerDoctorRequestSchema = z.object({
+  fullName: personNameSchema,
+  email: emailSchema,
+  password: passwordSchema,
+  specialty: z.string().trim().min(2).max(120),
+  licenseNumber: z.string().trim().min(3).max(60).optional(),
+}).strict();
+
+export const loginRequestSchema = z.object({
+  email: emailSchema,
+  // Login only bounds the length; the strength policy applies when a password is set.
+  password: z.string().min(1).max(PASSWORD_MAX_LENGTH),
+}).strict();
+
+export const authUserSchema = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  email: z.email(),
+  role: userRoleSchema,
+  status: accountStatusSchema,
+  patientId: z.uuid().nullable(),
+  doctorId: z.uuid().nullable(),
+  doctorVerification: verificationStatusSchema.nullable(),
+});
+
+export const authSessionSchema = z.object({
+  accessToken: z.string(),
+  tokenType: z.literal('Bearer'),
+  expiresIn: z.number().int().positive(),
+  user: authUserSchema,
+});
+
+export const errorResponseSchema = z.object({
+  statusCode: z.number().int(),
+  code: z.string(),
+  message: z.string(),
+  requestId: z.string(),
+  timestamp: z.iso.datetime(),
+  details: z.array(z.object({ path: z.string(), message: z.string() })).optional(),
+});
+
+export type UserRole = z.infer<typeof userRoleSchema>;
+export type AccountStatus = z.infer<typeof accountStatusSchema>;
+export type RegisterPatientRequest = z.infer<typeof registerPatientRequestSchema>;
+export type RegisterDoctorRequest = z.infer<typeof registerDoctorRequestSchema>;
+export type LoginRequest = z.infer<typeof loginRequestSchema>;
+export type AuthUser = z.infer<typeof authUserSchema>;
+export type AuthSession = z.infer<typeof authSessionSchema>;
+export type ErrorResponse = z.infer<typeof errorResponseSchema>;

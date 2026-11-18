@@ -7,7 +7,7 @@
 
 PMRMS is a secure web application for creating, viewing, organizing, and downloading patient medical records. Approved doctors manage records for assigned patients; administrators manage accounts and assignments; patients review their own history and permitted PDF reports.
 
-> **Current milestone:** local infrastructure foundation (frontend ↔ API ↔ PostgreSQL). Authentication, clinical models, RLS, R2 storage and realtime features are planned next — see [`docs/`](docs/).
+> **Current milestone:** the full clinical database schema (with database-enforced integrity rules), seeded demo data and JWT authentication are implemented. Clinical record APIs, RLS, R2 storage and realtime features are next. See [`docs/`](docs/).
 
 ---
 
@@ -54,7 +54,7 @@ Full functional requirements and business rules live in [`docs/`](docs/).
 | Database | PostgreSQL | Persistent data |
 | ORM | Prisma 7 (`@prisma/adapter-pg`) | Models, migrations, queries |
 | Monorepo | pnpm workspaces + Turborepo | Build orchestration |
-| Auth *(planned)* | Custom NestJS JWT + Argon2id | Sessions and password hashing |
+| Auth | NestJS JWT (HS256) + rotating refresh cookie + Argon2id | Sessions and password hashing |
 | Storage *(planned)* | Cloudflare R2 | Private medical PDFs |
 | Realtime *(planned)* | Supabase Realtime Broadcast | Live UI signals |
 
@@ -95,16 +95,15 @@ CLIENT_SERVER_223005124_CLAUDE_IRANZI_PROJECT/
 Browser  →  http://localhost:3000
               │
               ├─ Next.js UI
-              └─ /api/health  (rewrite proxy)
+              └─ /api/*  (rewrite proxy, same origin → refresh cookie stays first-party)
                       │
                       ▼
                  NestJS API  →  http://127.0.0.1:3001/v1/...
+                   guards: rate limit → JWT + live account check → roles
                       │
                       ▼
                  Prisma 7 + PostgreSQL database `pmrms`
-                      │
-                      ▼
-                 SystemCheck seed marker (setup verification)
+                   11 tables · CHECK constraints · integrity triggers · audit log
 ```
 
 | URL | Description |
@@ -115,7 +114,56 @@ Browser  →  http://localhost:3000
 | http://127.0.0.1:3001/docs | Interactive Swagger documentation |
 | http://127.0.0.1:3001/docs-json | OpenAPI JSON |
 
-Database credentials never leave the server. There are no public write endpoints at this stage.
+Database credentials never leave the server.
+
+### 4.1 Database
+
+| Area | Tables |
+| --- | --- |
+| Identity | `users`, `patients`, `doctors`, `refresh_sessions` |
+| Care relationships | `doctor_patients` (one ACTIVE assignment per pair, full revocation history) |
+| Clinical | `records`, `medical_files`, `record_revisions` |
+| Operations | `access_logs` (append-only), `notifications`, `outbox_events` |
+
+Rules the application must never be trusted to enforce alone are also enforced by PostgreSQL: a profile must match its user's role, record ownership cannot change after insert, audit rows cannot be edited or deleted, emails are stored lowercase, diagnoses cannot be blank, and assignment status always agrees with its revocation fields. Details are in [`docs/04`](docs/04-database-design-erd-and-prisma-schema.md).
+
+### 4.2 Authentication
+
+All routes are under `/v1` (or `/api` through the Next.js proxy). Every route requires a valid access token unless it is explicitly public.
+
+| Method | Route | Access | Result |
+| --- | --- | --- | --- |
+| POST | `/auth/register/patient` | Public | Creates an ACTIVE patient and starts a session |
+| POST | `/auth/register/doctor-request` | Public | Creates a PENDING doctor applicant (no clinical access) |
+| POST | `/auth/login` | Public | Access JWT in JSON, refresh token in an HttpOnly cookie |
+| POST | `/auth/refresh` | Refresh cookie + `X-PMRMS-CSRF: 1` | Rotates the refresh token and returns a new access JWT |
+| POST | `/auth/logout` | Refresh cookie + `X-PMRMS-CSRF: 1` | Revokes the session, `204` |
+| POST | `/auth/logout-all` | Bearer token | Revokes every session of the user, `204` |
+| GET | `/auth/me` | Bearer token | Current account, read from the database |
+
+Security properties:
+
+- Passwords are hashed with **Argon2id** (19 MiB, 2 iterations). Policy: 12–128 characters with upper case, lower case and a digit.
+- Access tokens last **15 minutes**, are signed with a pinned algorithm and checked for issuer and audience. Every request reloads the account, so suspension and logout take effect immediately.
+- Refresh tokens are random 256-bit values stored only as an HMAC-SHA256 hash. They are **single-use**: replaying a rotated token revokes its whole session family.
+- Unknown emails and wrong passwords get the same response and cost the same time. Five failures lock the account for 15 minutes, and sign-in routes are rate limited per IP.
+- Every sign-in, denial, lockout, logout and token-reuse event is written to `access_logs` with the request ID.
+
+### 4.3 Demo accounts
+
+`pnpm db:seed` creates fictional data from [`docs/04` §13](docs/04-database-design-erd-and-prisma-schema.md): 10 patients, 10 records, 3 approved doctors, 1 pending doctor, 1 administrator and 11 active assignments. All accounts share the password set in `SEED_DEMO_PASSWORD` in `.env`.
+
+| Email | Role / status | Demonstrates |
+| --- | --- | --- |
+| `admin.demo@example.test` | ADMIN / ACTIVE | Approvals and assignments |
+| `doctor.a@example.test` | DOCTOR / APPROVED | Primary clinical demo (patients 1, 2, 6, 10) |
+| `doctor.b@example.test` | DOCTOR / APPROVED | Shares patient 1 with Doctor A for the concurrent-edit demo |
+| `doctor.c@example.test` | DOCTOR / APPROVED | Not assigned to patient 1 (isolation test) |
+| `doctor.pending@example.test` | DOCTOR / PENDING | Signs in to a limited shell only |
+| `patient.a@example.test` | PATIENT / ACTIVE | Own records |
+| `patient.b@example.test` | PATIENT / ACTIVE | Cross-patient denial |
+
+Seeded rows use readable fixed IDs, for example patient 1 is `20000000-0000-4000-8000-000000000001` and record 1 is `40000000-0000-4000-8000-000000000001`.
 
 ---
 
@@ -145,7 +193,7 @@ pnpm run env:init
 #    Example shape:
 #    DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/pmrms?schema=public
 
-# 4. Generate Prisma Client, apply migrations, seed setup marker
+# 4. Generate Prisma Client, apply migrations, seed demo data
 pnpm setup:local
 
 # 5. Start frontend + API together
@@ -169,7 +217,7 @@ Stop the apps with `Ctrl+C`. PostgreSQL keeps running as a service (or Docker co
 With both apps running:
 
 ```powershell
-pnpm test:smoke     # frontend, proxy, database, CORS, OpenAPI
+pnpm test:smoke     # frontend, proxy, database, CORS, OpenAPI and the full auth flow
 pnpm test:api       # readiness success / failure unit checks
 ```
 
@@ -186,7 +234,7 @@ On the home page, **Workspace Status** should show Frontend, Backend and Databas
 | `pnpm typecheck` | TypeScript check across workspaces |
 | `pnpm build` | Production build |
 | `pnpm db:migrate` | Apply committed migrations |
-| `pnpm db:seed` | Idempotent setup marker |
+| `pnpm db:seed` | Idempotent demo data (re-running resets demo account passwords and lockouts) |
 | `pnpm db:status` | Migration status |
 | `pnpm db:studio` | Prisma Studio GUI |
 | `pnpm db:up` / `pnpm db:down` | Start / stop optional Docker Postgres |
@@ -195,7 +243,8 @@ Environment notes:
 
 - Root `.env` is loaded by NestJS, Next.js, Prisma CLI and the seed script.
 - `API_ORIGIN` must match the API host/port used by the Next.js proxy.
-- `WEB_ORIGIN` controls CORS.
+- `WEB_ORIGIN` controls CORS and which origin may call the cookie endpoints.
+- `JWT_ACCESS_SECRET` and `REFRESH_TOKEN_PEPPER` must be different random values of 32+ characters; `pnpm env:init` generates them.
 - Restart `pnpm dev` after changing `.env`.
 
 ---
@@ -222,8 +271,8 @@ These documents are the feature baseline for upcoming milestones.
 | Stage | Status | Deliverable |
 | --- | --- | --- |
 | 0 — Local foundation | **Done** | Monorepo, PostgreSQL, Prisma, health UI, OpenAPI |
-| 1 — Authentication | Planned | JWT auth, Argon2id, roles, first admin bootstrap |
-| 2 — Clinical domain | Planned | Patients, doctors, assignments, records, audit |
+| 1 — Authentication | **Done** | JWT auth, rotating refresh sessions, Argon2id, roles, lockout, audit |
+| 2 — Clinical domain | In progress | Schema, constraints and seed **done**; records, assignments and admin APIs next |
 | 3 — Authorization & RLS | Planned | NestJS guards + PostgreSQL row-level security |
 | 4 — Documents | Planned | Private R2 PDFs and signed download links |
 | 5 — Realtime & polish | Planned | Broadcast notifications, tests, demo deployment |
@@ -233,8 +282,9 @@ These documents are the feature baseline for upcoming milestones.
 ## 11. Academic & security notes
 
 - This is an **academic prototype**. Do **not** store real patient data.
-- Only the infrastructure table `SystemCheck` exists in the database today.
+- All seeded people, diagnoses and accounts are fictional (`example.test` addresses).
 - `.env` contains secrets and is gitignored; share `.env.example` only.
+- The seed refuses to run when `NODE_ENV=production`.
 - Prefer least-privilege database roles (LOGIN, no SUPERUSER / CREATEDB for the app user).
 
 ### Troubleshooting
@@ -244,7 +294,8 @@ These documents are the feature baseline for upcoming milestones.
 | Database unavailable | PostgreSQL service running? `DATABASE_URL` correct? `pnpm db:status` |
 | Setup incomplete | Run `pnpm db:seed` |
 | Port already in use | Free ports 3000 / 3001 or update ports and origins together |
-| Smoke test fails | Ensure `pnpm dev` is running before `pnpm test:smoke` |
+| Smoke test fails | Ensure `pnpm dev` is running and `pnpm db:seed` has been run before `pnpm test:smoke` |
+| Login returns `429` | Rate limit or lockout; wait (see `Retry-After`) or re-run `pnpm db:seed` to reset demo accounts |
 
 ---
 

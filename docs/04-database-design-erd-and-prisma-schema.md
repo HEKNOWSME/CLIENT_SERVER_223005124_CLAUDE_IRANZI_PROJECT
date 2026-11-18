@@ -16,7 +16,7 @@ This document is the authoritative relational design for PMRMS. It defines:
 1. **Entities and relationships** — who owns which data  
 2. **Schema logic** — invariants, lifecycles, and constraints the database must enforce  
 3. **Prisma models** — implementable definitions aligned with Prisma 7  
-4. **SQL beyond Prisma** — checks, partial unique indexes, and RLS patterns  
+4. **SQL beyond Prisma** — checks, integrity triggers, and RLS patterns  
 5. **Seed and test evidence** — what the professor can verify  
 
 | Concern | Decision |
@@ -247,9 +247,11 @@ erDiagram
 
 ---
 
-## 4. Prisma 7 schema (target)
+## 4. Prisma 7 schema
 
 Aligned with this repository: generated client under `apps/api/src/generated/prisma`, connection URL in `apps/api/prisma.config.ts` (not inside `datasource`).
+
+**Implemented.** The authoritative file is [`apps/api/prisma/schema.prisma`](../apps/api/prisma/schema.prisma). It follows the listing below and adds, for authentication hardening: `users.failed_login_attempts`, `locked_until`, `last_login_at`, `password_changed_at`; `patients.phone`; a unique optional `doctors.license_number` and `verified_by_user_id`; and the `SessionRevocationReason` enum.
 
 ```prisma
 // apps/api/prisma/schema.prisma  — TARGET clinical schema (Stage 1+)
@@ -376,12 +378,15 @@ model DoctorPatient {
   doctor    Doctor           @relation(fields: [doctorId], references: [id], onDelete: Restrict)
   patient   Patient          @relation(fields: [patientId], references: [id], onDelete: Restrict)
   status    AssignmentStatus @default(ACTIVE)
+  // TRUE while ACTIVE, NULL once revoked: one ACTIVE pair, unlimited history (section 5)
+  activeLock Boolean?        @default(true) @map("active_lock")
   assignedAt DateTime        @default(now()) @map("assigned_at") @db.Timestamptz(6)
   assignedByUserId String?   @map("assigned_by_user_id") @db.Uuid
   revokedAt DateTime?        @map("revoked_at") @db.Timestamptz(6)
   revokedByUserId  String?   @map("revoked_by_user_id") @db.Uuid
   note      String?          @db.VarChar(500)
 
+  @@unique([doctorId, patientId, activeLock], map: "doctor_patients_one_active_pair")
   @@index([doctorId, status])
   @@index([patientId, status])
   @@map("doctor_patients")
@@ -484,13 +489,20 @@ model RefreshSession {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId    String    @map("user_id") @db.Uuid
   user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
-  tokenHash String    @unique @map("token_hash") @db.VarChar(255)
-  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
-  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
-  userAgent String?   @map("user_agent") @db.VarChar(300)
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  familyId      String    @map("family_id") @db.Uuid      // shared by every rotation of one sign-in
+  tokenHash     String    @unique @map("token_hash") @db.VarChar(128)  // HMAC-SHA256 with server pepper
+  replacedById  String?   @map("replaced_by_id") @db.Uuid
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  lastUsedAt    DateTime? @map("last_used_at") @db.Timestamptz(6)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedReason SessionRevocationReason? @map("revoked_reason")
+  userAgent     String?   @map("user_agent") @db.VarChar(300)
+  ipAddress     String?   @map("ip_address") @db.VarChar(64)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  @@index([userId, expiresAt])
+  @@index([userId, revokedAt])
+  @@index([familyId])
+  @@index([expiresAt])
   @@map("refresh_sessions")
 }
 
@@ -516,16 +528,14 @@ model OutboxEvent {
 
 ## 5. SQL constraints Prisma cannot express alone
 
-Apply these in a reviewed migration **after** Prisma creates the tables.
+These are applied in migration `20261118120000_identity_clinical_core`, appended after the Prisma-generated DDL. Only CHECK constraints and triggers are used: Prisma does not track them, so later `prisma migrate dev` runs leave them alone. Expression and partial indexes would be dropped by Prisma's drift detection, so the two rules that would normally need them are designed differently:
+
+- **Case-insensitive email:** a `users_email_lowercase` CHECK guarantees every stored email is lowercase, so the ordinary unique index on `email` is already case-insensitive. The API lowercases input before writing.
+- **One ACTIVE assignment per pair:** `doctor_patients.active_lock` is `TRUE` while ACTIVE and `NULL` once revoked. The Prisma-declared unique index on `(doctor_id, patient_id, active_lock)` therefore admits one ACTIVE row per pair, while revoked rows (all `NULL`) never collide and keep full history.
 
 ```sql
--- Case-insensitive email uniqueness (backend also lowercases on write)
-CREATE UNIQUE INDEX users_email_lower_unique ON users (lower(email));
-
--- One ACTIVE assignment per doctor–patient pair (revoked rows may repeat historically)
-CREATE UNIQUE INDEX doctor_patients_one_active_pair
-  ON doctor_patients (doctor_id, patient_id)
-  WHERE status = 'ACTIVE';
+ALTER TABLE users
+  ADD CONSTRAINT users_email_lowercase CHECK (email = lower(email) AND length(btrim(email)) > 0);
 
 ALTER TABLE records
   ADD CONSTRAINT records_nonblank_diagnosis CHECK (length(btrim(diagnosis)) > 0),
@@ -538,8 +548,8 @@ ALTER TABLE medical_files
 ALTER TABLE doctor_patients
   ADD CONSTRAINT doctor_patients_revocation_consistency
   CHECK (
-    (status = 'ACTIVE'  AND revoked_at IS NULL) OR
-    (status = 'REVOKED' AND revoked_at IS NOT NULL)
+    (status = 'ACTIVE'  AND active_lock IS TRUE AND revoked_at IS NULL) OR
+    (status = 'REVOKED' AND active_lock IS NULL AND revoked_at IS NOT NULL)
   );
 
 ALTER TABLE record_revisions
@@ -558,7 +568,9 @@ BEGIN
 COMMIT
 ```
 
-Optional hardened trigger (recommended for the demo if time allows): reject profile inserts when `users.role` mismatches.
+Implemented as hardening: the `enforce_profile_role` trigger rejects a `patients` or `doctors` row whose user has a different role, and `prevent_role_change_with_profile` stops a user's role from changing while a profile exists.
+
+The migration also adds: non-blank names, plausible birth and record dates (≥ 1900), a 10 MiB ceiling and SHA-256 format check on `medical_files`, `doctors.verified_at` required once a decision is made, revocation reason/time consistency on `refresh_sessions`, and an append-only trigger on `access_logs` and `record_revisions`.
 
 ### 5.2 Immutable clinical ownership columns
 
@@ -583,11 +595,12 @@ END IF;
 | `records(diagnosis)` | Scoped diagnosis `groupBy` / filter |
 | `records(status)` | Exclude archived rows efficiently |
 | `doctor_patients(doctor_id, status)` / `(patient_id, status)` | Assignment checks on every clinical call |
-| Partial unique `(doctor_id, patient_id) WHERE ACTIVE` | Duplicate assignment prevention |
+| Unique `(doctor_id, patient_id, active_lock)` | Duplicate ACTIVE assignment prevention |
 | `notifications(recipient_user_id, read_at, created_at DESC)` | Inbox + unread badge |
 | `access_logs(actor_user_id, created_at DESC)` | Security investigation |
 | `outbox_events(published_at, created_at)` | Publisher drain queue |
-| `users(lower(email))` unique | Login lookup without case duplicates |
+| `users(email)` unique + lowercase CHECK | Login lookup without case duplicates |
+| `refresh_sessions(family_id)` / `(user_id, revoked_at)` | Family revocation and per-request session check |
 
 Validate with `EXPLAIN ANALYZE` on seeded data before adding more indexes.
 
@@ -839,7 +852,7 @@ Mandatory academic set: **DB-01 … DB-08**. Remaining items strengthen the secu
 
 1. Keep Stage 0 `SystemCheck` healthy on database `pmrms`.  
 2. Add enums and identity tables (`users`, `patients`, `doctors`).  
-3. Add `doctor_patients` + partial unique index + revocation CHECK.  
+3. Add `doctor_patients` + active-pair unique index + revocation CHECK.  
 4. Add `records`, `medical_files`, `record_revisions` + checks/indexes.  
 5. Add `notifications`, `access_logs`, `refresh_sessions`, `outbox_events`.  
 6. Apply RLS helpers/policies for the restricted runtime role.  
@@ -853,16 +866,17 @@ Mandatory academic set: **DB-01 … DB-08**. Remaining items strengthen the secu
 DATABASE_URL=
 DIRECT_URL=
 JWT_ACCESS_SECRET=
-JWT_REFRESH_SECRET=
+REFRESH_TOKEN_PEPPER=
+SEED_DEMO_PASSWORD=
 SUPABASE_URL=
 SUPABASE_PUBLISHABLE_KEY=
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
 R2_BUCKET=
-SEED_ADMIN_EMAIL=
-SEED_ADMIN_PASSWORD=
 ```
+
+The refresh token is an opaque random value, not a JWT, so it has a hashing **pepper** rather than a signing secret.
 
 ---
 

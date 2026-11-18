@@ -8,7 +8,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   constructor() {
     super({ adapter: new PrismaPg({
       connectionString: env.DATABASE_URL,
-      max: 5,
+      max: env.DATABASE_POOL_MAX,
       connectionTimeoutMillis: 5000,
       idleTimeoutMillis: 30000,
       options: '-c statement_timeout=5000',

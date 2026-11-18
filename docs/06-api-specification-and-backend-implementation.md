@@ -185,9 +185,10 @@ All Nest paths below are under **`/v1`**.
 | POST | `/auth/register/patient` | Public | Create PATIENT + profile |
 | POST | `/auth/register/doctor-request` | Public | Pending doctor request — **no** clinical access |
 | POST | `/auth/login` | Public | Access JWT + refresh cookie |
-| POST | `/auth/refresh` | Refresh cookie | Rotate refresh; new access JWT |
-| POST | `/auth/logout` | Session | Revoke refresh; clear cookie → `204` |
-| GET | `/auth/me` | A/D/P | Safe identity summary |
+| POST | `/auth/refresh` | Refresh cookie + CSRF header | Rotate refresh; new access JWT |
+| POST | `/auth/logout` | Refresh cookie + CSRF header | Revoke session family; clear cookie → `204` |
+| POST | `/auth/logout-all` | A/D/P (incl. pending) | Revoke every session of the user → `204` |
+| GET | `/auth/me` | A/D/P (incl. pending) | Safe identity summary |
 | POST | `/auth/realtime-token` | A/D/P | Short Supabase-verifiable JWT |
 
 **Login request**
@@ -200,18 +201,27 @@ All Nest paths below are under **`/v1`**.
 {
   "data": {
     "accessToken": "<jwt>",
+    "tokenType": "Bearer",
     "expiresIn": 900,
     "user": {
-      "id": "11111111-1111-4111-8111-111111111111",
-      "name": "Sample Patient",
+      "id": "10000000-0000-4000-8000-000000000101",
+      "name": "Aline Test",
+      "email": "patient.a@example.test",
       "role": "PATIENT",
-      "status": "ACTIVE"
+      "status": "ACTIVE",
+      "patientId": "20000000-0000-4000-8000-000000000001",
+      "doctorId": null,
+      "doctorVerification": null
     }
   }
 }
 ```
 
-Refresh token is **cookie-only** — never returned in JSON. Demo passwords come from local seed env, not Git.
+Refresh token is **cookie-only** (`pmrms_refresh`, `HttpOnly; SameSite=Strict`, plus `Secure` and the `__Host-` prefix in production) and is never returned in JSON. Cookie-authenticated calls (`/auth/refresh`, `/auth/logout`) must send `X-PMRMS-CSRF: 1`; the header forces a CORS preflight that only `WEB_ORIGIN` passes, and any `Origin` header must be the web app or the API itself.
+
+Auth-specific error codes: `INVALID_CREDENTIALS` (401, identical for unknown email and wrong password), `SESSION_EXPIRED` (401), `ACCOUNT_EXISTS` (409), `ACCOUNT_SUSPENDED` (403), `ACCOUNT_PENDING` (403 on routes that need an approved account), `CSRF_REJECTED` (403) and `RATE_LIMITED` (429 with `Retry-After`, also used for lockout after 5 failed sign-ins).
+
+Demo passwords come from `SEED_DEMO_PASSWORD` in the local `.env`, not from Git.
 
 ### 4.3 Admin
 

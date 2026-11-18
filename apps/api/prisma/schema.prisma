@@ -8,8 +8,289 @@ datasource db {
   provider = "postgresql"
 }
 
-// Infrastructure marker only. Clinical models arrive with authentication and RLS.
+enum UserRole {
+  ADMIN
+  DOCTOR
+  PATIENT
+}
+
+enum AccountStatus {
+  ACTIVE
+  PENDING
+  SUSPENDED
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum RecordStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum AuditOutcome {
+  SUCCESS
+  DENIED
+  ERROR
+}
+
+enum NotificationKind {
+  RECORD_CREATED
+  RECORD_UPDATED
+  ASSIGNMENT_CHANGED
+  ACCOUNT_STATUS_CHANGED
+  GENERIC
+}
+
+enum SessionRevocationReason {
+  ROTATED
+  LOGOUT
+  LOGOUT_ALL
+  REUSE_DETECTED
+  ACCOUNT_SUSPENDED
+  PASSWORD_CHANGED
+}
+
+// Infrastructure marker read by the readiness endpoint.
 model SystemCheck {
   id        String   @id
   createdAt DateTime @default(now()) @db.Timestamptz(3)
+}
+
+model User {
+  id                  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String        @db.VarChar(150)
+  // Stored lowercase; a database CHECK rejects mixed-case values.
+  email               String        @unique @db.VarChar(255)
+  passwordHash        String        @map("password_hash")
+  role                UserRole
+  status              AccountStatus @default(PENDING)
+  failedLoginAttempts Int           @default(0) @map("failed_login_attempts")
+  lockedUntil         DateTime?     @map("locked_until") @db.Timestamptz(6)
+  lastLoginAt         DateTime?     @map("last_login_at") @db.Timestamptz(6)
+  passwordChangedAt   DateTime      @default(now()) @map("password_changed_at") @db.Timestamptz(6)
+
+  patient             Patient?
+  doctor              Doctor?
+  refreshSessions     RefreshSession[]
+  notifications       Notification[]
+  accessLogs          AccessLog[]
+  recordRevisions     RecordRevision[]
+  causedEvents        OutboxEvent[]
+  assignmentsCreated  DoctorPatient[]  @relation("AssignmentAssignedBy")
+  assignmentsRevoked  DoctorPatient[]  @relation("AssignmentRevokedBy")
+  filesUploaded       MedicalFile[]    @relation("FileUploadedBy")
+  doctorsVerified     Doctor[]         @relation("DoctorVerifiedBy")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([role, status])
+  @@map("users")
+}
+
+model Patient {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @unique @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  fullName  String   @map("full_name") @db.VarChar(150)
+  birthDate DateTime @map("birth_date") @db.Date
+  phone     String?  @db.VarChar(30)
+
+  records     MedicalRecord[]
+  assignments DoctorPatient[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([fullName])
+  @@map("patients")
+}
+
+model Doctor {
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String             @unique @map("user_id") @db.Uuid
+  user               User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  fullName           String             @map("full_name") @db.VarChar(150)
+  specialty          String             @db.VarChar(120)
+  licenseNumber      String?            @unique @map("license_number") @db.VarChar(60)
+  verificationStatus VerificationStatus @default(PENDING) @map("verification_status")
+  verifiedAt         DateTime?          @map("verified_at") @db.Timestamptz(6)
+  verifiedByUserId   String?            @map("verified_by_user_id") @db.Uuid
+  verifiedBy         User?              @relation("DoctorVerifiedBy", fields: [verifiedByUserId], references: [id], onDelete: Restrict)
+
+  records     MedicalRecord[]
+  assignments DoctorPatient[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([verificationStatus])
+  @@map("doctors")
+}
+
+model DoctorPatient {
+  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doctorId  String           @map("doctor_id") @db.Uuid
+  patientId String           @map("patient_id") @db.Uuid
+  doctor    Doctor           @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+  patient   Patient          @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  status    AssignmentStatus @default(ACTIVE)
+  // TRUE while ACTIVE, NULL once revoked. NULLs never collide in a unique index,
+  // so this allows exactly one ACTIVE pair while keeping full revocation history.
+  activeLock Boolean?        @default(true) @map("active_lock")
+  note      String?          @db.VarChar(500)
+
+  assignedAt       DateTime  @default(now()) @map("assigned_at") @db.Timestamptz(6)
+  assignedByUserId String?   @map("assigned_by_user_id") @db.Uuid
+  assignedBy       User?     @relation("AssignmentAssignedBy", fields: [assignedByUserId], references: [id], onDelete: Restrict)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedByUserId  String?   @map("revoked_by_user_id") @db.Uuid
+  revokedBy        User?     @relation("AssignmentRevokedBy", fields: [revokedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([doctorId, patientId, activeLock], map: "doctor_patients_one_active_pair")
+  @@index([doctorId, status])
+  @@index([patientId, status])
+  @@map("doctor_patients")
+}
+
+model MedicalRecord {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId   String       @map("patient_id") @db.Uuid
+  doctorId    String       @map("doctor_id") @db.Uuid
+  patient     Patient      @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  doctor      Doctor       @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+  diagnosis   String       @db.VarChar(255)
+  description String?      @db.Text
+  recordDate  DateTime     @map("record_date") @db.Date
+  status      RecordStatus @default(ACTIVE)
+  version     Int          @default(1)
+  // Private storage path for the primary PDF; never a public URL.
+  fileUrl     String?      @map("file_url") @db.VarChar(700)
+
+  files     MedicalFile[]
+  revisions RecordRevision[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([patientId, recordDate(sort: Desc)])
+  @@index([doctorId, recordDate(sort: Desc)])
+  @@index([diagnosis])
+  @@index([status])
+  @@map("records")
+}
+
+model MedicalFile {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recordId       String        @map("record_id") @db.Uuid
+  record         MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Restrict)
+  objectKey      String        @unique @map("object_key") @db.VarChar(700)
+  originalName   String        @map("original_name") @db.VarChar(255)
+  mimeType       String        @map("mime_type") @db.VarChar(100)
+  sizeBytes      BigInt        @map("size_bytes")
+  checksumSha256 String?       @map("checksum_sha256") @db.VarChar(64)
+  uploadedById   String?       @map("uploaded_by_id") @db.Uuid
+  uploadedBy     User?         @relation("FileUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([recordId])
+  @@map("medical_files")
+}
+
+model RecordRevision {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recordId      String        @map("record_id") @db.Uuid
+  record        MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Restrict)
+  changedById   String        @map("changed_by_id") @db.Uuid
+  changedBy     User          @relation(fields: [changedById], references: [id], onDelete: Restrict)
+  oldVersion    Int           @map("old_version")
+  newVersion    Int           @map("new_version")
+  previousData  Json          @map("previous_data")
+  changeSummary String?       @map("change_summary") @db.VarChar(500)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([recordId, newVersion])
+  @@index([recordId, createdAt(sort: Desc)])
+  @@map("record_revisions")
+}
+
+model AccessLog {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorUserId  String?      @map("actor_user_id") @db.Uuid
+  actor        User?        @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  action       String       @db.VarChar(80)
+  resourceType String       @map("resource_type") @db.VarChar(50)
+  resourceId   String?      @map("resource_id") @db.Uuid
+  outcome      AuditOutcome
+  reasonCode   String?      @map("reason_code") @db.VarChar(80)
+  requestId    String?      @map("request_id") @db.VarChar(100)
+  ipAddress    String?      @map("ip_address") @db.VarChar(64)
+  userAgent    String?      @map("user_agent") @db.VarChar(300)
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([actorUserId, createdAt(sort: Desc)])
+  @@index([resourceType, resourceId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("access_logs")
+}
+
+model Notification {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recipientUserId   String           @map("recipient_user_id") @db.Uuid
+  recipient         User             @relation(fields: [recipientUserId], references: [id], onDelete: Restrict)
+  kind              NotificationKind
+  // Generic text only — never diagnoses, notes or file names.
+  title             String           @db.VarChar(200)
+  relatedResourceId String?          @map("related_resource_id") @db.Uuid
+  readAt            DateTime?        @map("read_at") @db.Timestamptz(6)
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([recipientUserId, readAt, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+model RefreshSession {
+  id            String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String                   @map("user_id") @db.Uuid
+  user          User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  // Every rotation keeps the family id, so reuse of a rotated token revokes the whole chain.
+  familyId      String                   @map("family_id") @db.Uuid
+  tokenHash     String                   @unique @map("token_hash") @db.VarChar(128)
+  replacedById  String?                  @map("replaced_by_id") @db.Uuid
+  expiresAt     DateTime                 @map("expires_at") @db.Timestamptz(6)
+  lastUsedAt    DateTime?                @map("last_used_at") @db.Timestamptz(6)
+  revokedAt     DateTime?                @map("revoked_at") @db.Timestamptz(6)
+  revokedReason SessionRevocationReason? @map("revoked_reason")
+  userAgent     String?                  @map("user_agent") @db.VarChar(300)
+  ipAddress     String?                  @map("ip_address") @db.VarChar(64)
+  createdAt     DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId, revokedAt])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_sessions")
+}
+
+model OutboxEvent {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorUserId String?   @map("actor_user_id") @db.Uuid
+  actor       User?     @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  eventType   String    @map("event_type") @db.VarChar(80)
+  topic       String    @db.VarChar(200)
+  payload     Json
+  attempts    Int       @default(0)
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([publishedAt, createdAt])
+  @@map("outbox_events")
 }
