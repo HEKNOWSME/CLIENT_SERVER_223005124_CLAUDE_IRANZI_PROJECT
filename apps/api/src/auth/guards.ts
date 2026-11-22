@@ -39,6 +39,7 @@ export class JwtAuthGuard implements CanActivate {
         id: true,
         role: true,
         status: true,
+        emailVerifiedAt: true,
         passwordChangedAt: true,
         refreshSessions: {
           where: { familyId: claims.sid, revokedAt: null, expiresAt: { gt: new Date() } },
@@ -48,7 +49,7 @@ export class JwtAuthGuard implements CanActivate {
       },
     });
     const issuedBeforePasswordChange = user ? claims.iat < Math.floor(user.passwordChangedAt.getTime() / 1000) : true;
-    if (!user || user.role !== claims.role || user.refreshSessions.length === 0 || issuedBeforePasswordChange) {
+    if (!user || user.role !== claims.role || user.refreshSessions.length === 0 || issuedBeforePasswordChange || !user.emailVerifiedAt) {
       throw unauthorized('Access token is invalid or expired.');
     }
     if (user.status === 'SUSPENDED') throw forbidden('This account is suspended.', 'ACCOUNT_SUSPENDED');

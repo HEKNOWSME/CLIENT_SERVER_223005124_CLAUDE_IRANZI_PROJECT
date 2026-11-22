@@ -9,7 +9,7 @@ export default function RegisterPage() {
     <AuthCard
       eyebrow="Patient registration"
       title="Create your account"
-      description="View your medical history and download reports shared by your doctors."
+      description="We will email a one-time code to confirm your address before opening your workspace."
       footer={[
         { text: 'Already registered?', href: '/login', label: 'Sign in' },
         { text: 'Are you a doctor?', href: '/doctor/apply', label: 'Apply for access' },

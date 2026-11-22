@@ -19,6 +19,11 @@ const result = z.object({
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
   LOGIN_MAX_FAILED_ATTEMPTS: z.coerce.number().int().min(3).max(20).default(5),
   LOGIN_LOCKOUT_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
+  RESEND_API_KEY: z.string().min(1, 'Resend API key is required for registration OTP emails'),
+  RESEND_FROM_EMAIL: z.string().min(3, 'Verified Resend from address is required, e.g. PMRMS <noreply@yourdomain.com>'),
+  OTP_TTL_MINUTES: z.coerce.number().int().min(5).max(60).default(10),
+  OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().min(30).max(600).default(60),
+  OTP_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(10).default(5),
 }).refine(value => value.JWT_ACCESS_SECRET !== value.REFRESH_TOKEN_PEPPER, {
   path: ['REFRESH_TOKEN_PEPPER'], message: 'must differ from JWT_ACCESS_SECRET',
 }).safeParse(process.env);

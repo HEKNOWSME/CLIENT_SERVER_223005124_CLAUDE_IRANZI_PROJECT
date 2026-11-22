@@ -53,7 +53,7 @@ Full functional requirements and business rules live in [`docs/`](docs/).
 | Validation | Zod (shared contracts package) | Typed request/response schemas |
 | Database | PostgreSQL | Persistent data |
 | ORM | Prisma 7 (`@prisma/adapter-pg`) | Models, migrations, queries |
-| Monorepo | pnpm workspaces + Turborepo | Build orchestration |
+| Monorepo | pnpm workspaces | Build orchestration |
 | Auth | NestJS JWT (HS256) + rotating refresh cookie + Argon2id | Sessions and password hashing |
 | Storage *(planned)* | Cloudflare R2 | Private medical PDFs |
 | Realtime *(planned)* | Supabase Realtime Broadcast | Live UI signals |
@@ -133,7 +133,9 @@ All routes are under `/v1` (or `/api` through the Next.js proxy). Every route re
 
 | Method | Route | Access | Result |
 | --- | --- | --- | --- |
-| POST | `/auth/register/patient` | Public | Creates an ACTIVE patient and starts a session |
+| POST | `/auth/register/patient` | Public | Creates an unverified patient and emails a Resend OTP (no session yet) |
+| POST | `/auth/verify-email` | Public | Confirms the OTP and starts a session |
+| POST | `/auth/resend-otp` | Public | Resends the patient registration OTP (rate limited) |
 | POST | `/auth/register/doctor-request` | Public | Creates a PENDING doctor applicant (no clinical access) |
 | POST | `/auth/login` | Public | Access JWT in JSON, refresh token in an HttpOnly cookie |
 | POST | `/auth/refresh` | Refresh cookie + `X-PMRMS-CSRF: 1` | Rotates the refresh token and returns a new access JWT |
@@ -258,7 +260,7 @@ Styling uses Tailwind 4 theme tokens defined in `apps/web/app/globals.css`. Ever
 
 | Command | Description |
 | --- | --- |
-| `pnpm dev` | Start web + API (Turborepo) |
+| `pnpm dev` | Start web + API in parallel |
 | `pnpm dev:web` / `pnpm dev:api` | Start one app |
 | `pnpm typecheck` | TypeScript check across workspaces |
 | `pnpm build` | Production build |
@@ -274,6 +276,7 @@ Environment notes:
 - `API_ORIGIN` must match the API host/port used by the Next.js proxy.
 - `WEB_ORIGIN` controls CORS and which origin may call the cookie endpoints.
 - `JWT_ACCESS_SECRET` and `REFRESH_TOKEN_PEPPER` must be different random values of 32+ characters; `pnpm env:init` generates them.
+- Patient registration emails a 6-digit OTP through Resend. Set `RESEND_API_KEY` and a verified `RESEND_FROM_EMAIL` in `.env`.
 - Restart `pnpm dev` after changing `.env`.
 
 ---
@@ -300,7 +303,7 @@ These documents are the feature baseline for upcoming milestones.
 | Stage | Status | Deliverable |
 | --- | --- | --- |
 | 0 — Local foundation | **Done** | Monorepo, PostgreSQL, Prisma, health checks, OpenAPI, shared UI component library |
-| 1 — Authentication | **Done** | JWT auth, rotating refresh sessions, Argon2id, roles, lockout, audit, sign-in/registration UI and role workspaces |
+| 1 — Authentication | **Done** | JWT auth, rotating refresh sessions, Argon2id, roles, lockout, audit, patient email OTP (Resend), sign-in/registration UI and role workspaces |
 | 2 — Clinical domain | In progress | Schema, constraints and seed **done**; records, assignments and admin APIs next |
 | 3 — Authorization & RLS | Planned | NestJS guards + PostgreSQL row-level security |
 | 4 — Documents | Planned | Private R2 PDFs and signed download links |

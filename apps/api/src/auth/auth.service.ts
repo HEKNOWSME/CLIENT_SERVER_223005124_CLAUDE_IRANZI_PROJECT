@@ -1,5 +1,8 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import type { AuthSession, AuthUser, LoginRequest, RegisterDoctorRequest, RegisterPatientRequest } from '@pmrms/contracts';
+import type {
+  AuthSession, AuthUser, LoginRequest, RegisterDoctorRequest, RegisterPatientRequest,
+  RegistrationPending, ResendOtpRequest, VerifyEmailRequest,
+} from '@pmrms/contracts';
 import { randomUUID } from 'node:crypto';
 import { AuditService } from '../audit/audit.service';
 import { AppException, unauthorized } from '../common/app.exception';
@@ -7,6 +10,7 @@ import type { ClientContext } from '../common/request-context';
 import { env } from '../config';
 import { Prisma, SessionRevocationReason } from '../generated/prisma/client';
 import { PrismaService } from '../prisma.service';
+import { OtpService } from './otp.service';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
 
@@ -30,30 +34,88 @@ export class AuthService {
     private readonly passwords: PasswordService,
     private readonly tokens: TokenService,
     private readonly audit: AuditService,
+    private readonly otps: OtpService,
   ) {}
 
-  /** Public registration can only ever create an ACTIVE patient; the role is never read from the client. */
-  async registerPatient(input: RegisterPatientRequest, context: ClientContext): Promise<IssuedSession> {
+  /**
+   * Creates (or refreshes) an unverified patient account and emails a 6-digit OTP.
+   * No session is issued until `verifyEmail` succeeds.
+   */
+  async registerPatient(input: RegisterPatientRequest, context: ClientContext): Promise<RegistrationPending> {
     const passwordHash = await this.passwords.hash(input.password);
-    let user: UserWithProfiles;
-    try {
-      user = await this.prisma.user.create({
+    const existing = await this.prisma.user.findUnique({
+      where: { email: input.email },
+      include: { patient: true },
+    });
+
+    let userId: string;
+    if (existing) {
+      if (existing.role !== 'PATIENT' || existing.emailVerifiedAt || !existing.patient) throw accountExists();
+      await this.prisma.user.update({
+        where: { id: existing.id },
         data: {
           name: input.fullName,
-          email: input.email,
           passwordHash,
-          role: 'PATIENT',
-          status: 'ACTIVE',
-          patient: { create: { fullName: input.fullName, birthDate: new Date(`${input.birthDate}T00:00:00.000Z`), phone: input.phone } },
+          passwordChangedAt: new Date(),
+          patient: { update: { fullName: input.fullName, birthDate: new Date(`${input.birthDate}T00:00:00.000Z`), phone: input.phone ?? null } },
         },
-        include: userWithProfiles,
       });
-    } catch (error) {
-      if (isUniqueViolation(error)) throw accountExists();
-      throw error;
+      userId = existing.id;
+    } else {
+      try {
+        const created = await this.prisma.user.create({
+          data: {
+            name: input.fullName,
+            email: input.email,
+            passwordHash,
+            role: 'PATIENT',
+            status: 'ACTIVE',
+            emailVerifiedAt: null,
+            patient: { create: { fullName: input.fullName, birthDate: new Date(`${input.birthDate}T00:00:00.000Z`), phone: input.phone } },
+          },
+          select: { id: true },
+        });
+        userId = created.id;
+      } catch (error) {
+        if (isUniqueViolation(error)) throw accountExists();
+        throw error;
+      }
     }
-    await this.audit.record({ action: 'AUTH_REGISTER_PATIENT', outcome: 'SUCCESS', actorUserId: user.id, context });
-    return this.startSession(user, context);
+
+    const issued = await this.otps.issue(userId, input.email, 'REGISTER_PATIENT');
+    await this.audit.record({ action: 'AUTH_REGISTER_PATIENT', outcome: 'SUCCESS', actorUserId: userId, reasonCode: 'OTP_SENT', context });
+    return { status: 'PENDING_EMAIL_VERIFICATION', email: input.email, expiresIn: issued.expiresIn, ...(issued.debugCode ? { debugCode: issued.debugCode } : {}) };
+  }
+
+  async verifyEmail(input: VerifyEmailRequest, context: ClientContext): Promise<IssuedSession> {
+    const user = await this.prisma.user.findUnique({ where: { email: input.email }, include: userWithProfiles });
+    // Same generic response whether the email is unknown or already verified, to limit enumeration.
+    if (!user || user.role !== 'PATIENT' || user.emailVerifiedAt) {
+      throw new AppException(HttpStatus.BAD_REQUEST, 'OTP_INVALID', 'That code is invalid or has expired. Request a new one.');
+    }
+    if (user.status === 'SUSPENDED') {
+      throw new AppException(HttpStatus.FORBIDDEN, 'ACCOUNT_SUSPENDED', 'This account is suspended. Contact an administrator.');
+    }
+
+    await this.otps.consume(user.id, 'REGISTER_PATIENT', input.code);
+    const verified = await this.prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerifiedAt: new Date() },
+      include: userWithProfiles,
+    });
+    await this.audit.record({ action: 'AUTH_VERIFY_EMAIL', outcome: 'SUCCESS', actorUserId: user.id, context });
+    return this.startSession(verified, context);
+  }
+
+  async resendRegistrationOtp(input: ResendOtpRequest, context: ClientContext): Promise<RegistrationPending> {
+    const user = await this.prisma.user.findUnique({ where: { email: input.email }, select: { id: true, role: true, emailVerifiedAt: true, status: true } });
+    // Always look like success timing-wise when the account is not awaiting verification.
+    if (!user || user.role !== 'PATIENT' || user.emailVerifiedAt || user.status === 'SUSPENDED') {
+      return { status: 'PENDING_EMAIL_VERIFICATION', email: input.email, expiresIn: env.OTP_TTL_MINUTES * 60 };
+    }
+    const issued = await this.otps.issue(user.id, input.email, 'REGISTER_PATIENT');
+    await this.audit.record({ action: 'AUTH_RESEND_OTP', outcome: 'SUCCESS', actorUserId: user.id, context });
+    return { status: 'PENDING_EMAIL_VERIFICATION', email: input.email, expiresIn: issued.expiresIn, ...(issued.debugCode ? { debugCode: issued.debugCode } : {}) };
   }
 
   /** Doctor applicants get a PENDING account: they can sign in, but have no clinical access until approved. */
@@ -68,6 +130,7 @@ export class AuthService {
           passwordHash,
           role: 'DOCTOR',
           status: 'PENDING',
+          emailVerifiedAt: new Date(),
           doctor: { create: { fullName: input.fullName, specialty: input.specialty, licenseNumber: input.licenseNumber } },
         },
         include: userWithProfiles,
@@ -104,6 +167,10 @@ export class AuthService {
       await this.audit.record({ action: 'AUTH_LOGIN', outcome: 'DENIED', actorUserId: user.id, reasonCode: 'ACCOUNT_SUSPENDED', context });
       throw new AppException(HttpStatus.FORBIDDEN, 'ACCOUNT_SUSPENDED', 'This account is suspended. Contact an administrator.');
     }
+    if (!user.emailVerifiedAt) {
+      await this.audit.record({ action: 'AUTH_LOGIN', outcome: 'DENIED', actorUserId: user.id, reasonCode: 'EMAIL_NOT_VERIFIED', context });
+      throw new AppException(HttpStatus.FORBIDDEN, 'EMAIL_NOT_VERIFIED', 'Confirm the code we emailed you before signing in.');
+    }
 
     await this.prisma.user.update({ where: { id: user.id }, data: { failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: now } });
     await this.audit.record({ action: 'AUTH_LOGIN', outcome: 'SUCCESS', actorUserId: user.id, context });
@@ -131,6 +198,10 @@ export class AuthService {
     if (current.expiresAt <= now) throw sessionExpired();
     if (current.user.status === 'SUSPENDED') {
       await this.revokeFamily(current.familyId, 'ACCOUNT_SUSPENDED');
+      throw sessionExpired();
+    }
+    if (!current.user.emailVerifiedAt) {
+      await this.revokeFamily(current.familyId, 'LOGOUT');
       throw sessionExpired();
     }
 
@@ -244,6 +315,7 @@ export class AuthService {
       email: user.email,
       role: user.role,
       status: user.status,
+      emailVerified: Boolean(user.emailVerifiedAt),
       patientId: user.patient?.id ?? null,
       doctorId: user.doctor?.id ?? null,
       doctorVerification: user.doctor?.verificationStatus ?? null,

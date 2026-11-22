@@ -5,7 +5,6 @@ import { UserPlus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../lib/auth';
 import { confirmPassword, optional, PASSWORD_HINT, useZodForm } from '../../../lib/forms';
-import { HOME_BY_ROLE } from '../../../lib/roles';
 import { Alert, Button, FieldRow, PasswordField, TextField } from '../../ui';
 
 export function RegisterPatientForm() {
@@ -23,7 +22,11 @@ export function RegisterPatientForm() {
     }),
     validate: confirmPassword,
     submit: registerPatient,
-    onSuccess: user => router.replace(HOME_BY_ROLE[user.role]),
+    onSuccess: pending => {
+      const params = new URLSearchParams({ email: pending.email });
+      if (pending.debugCode) params.set('debug', pending.debugCode);
+      router.replace(`/verify-email?${params}`);
+    },
   });
 
   return (
@@ -39,7 +42,7 @@ export function RegisterPatientForm() {
         <PasswordField label="Password" name="password" autoComplete="new-password" required hint={PASSWORD_HINT} error={form.errors.password} />
         <PasswordField label="Confirm password" name="confirmPassword" autoComplete="new-password" required error={form.errors.confirmPassword} />
       </FieldRow>
-      <Button type="submit" variant="primary" size="lg" fullWidth loading={form.pending} loadingText="Creating account…" icon={<UserPlus className="size-5" aria-hidden="true" />}>
+      <Button type="submit" variant="primary" size="lg" fullWidth loading={form.pending} loadingText="Sending code…" icon={<UserPlus className="size-5" aria-hidden="true" />}>
         Create patient account
       </Button>
     </form>

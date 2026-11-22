@@ -71,9 +71,9 @@ const assignments = [
 async function upsertUser(user: SeedUser & { userId: string }, passwordHash: string) {
   return prisma.user.upsert({
     where: { email: user.email },
-    create: { id: user.userId, name: user.name, email: user.email, passwordHash, role: user.role, status: user.status },
+    create: { id: user.userId, name: user.name, email: user.email, passwordHash, role: user.role, status: user.status, emailVerifiedAt: new Date() },
     // Re-seeding resets the demo account to a known state (and invalidates its existing tokens).
-    update: { name: user.name, passwordHash, status: user.status, failedLoginAttempts: 0, lockedUntil: null, passwordChangedAt: new Date() },
+    update: { name: user.name, passwordHash, status: user.status, failedLoginAttempts: 0, lockedUntil: null, passwordChangedAt: new Date(), emailVerifiedAt: new Date() },
   });
 }
 

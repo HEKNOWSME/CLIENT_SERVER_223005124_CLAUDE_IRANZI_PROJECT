@@ -40,12 +40,33 @@ export const loginRequestSchema = z.object({
   password: z.string().min(1, 'Enter your password.').max(PASSWORD_MAX_LENGTH, `Password must be at most ${PASSWORD_MAX_LENGTH} characters.`),
 }).strict();
 
+export const otpCodeSchema = z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code from your email.');
+
+export const verifyEmailRequestSchema = z.object({
+  email: emailSchema,
+  code: otpCodeSchema,
+}).strict();
+
+export const resendOtpRequestSchema = z.object({
+  email: emailSchema,
+}).strict();
+
+/** Returned after patient registration until the email OTP is confirmed. No session is issued yet. */
+export const registrationPendingSchema = z.object({
+  status: z.literal('PENDING_EMAIL_VERIFICATION'),
+  email: z.email(),
+  expiresIn: z.number().int().positive(),
+  // Only present outside production so local testing can proceed without reading the inbox.
+  debugCode: z.string().regex(/^\d{6}$/).optional(),
+});
+
 export const authUserSchema = z.object({
   id: z.uuid(),
   name: z.string(),
   email: z.email(),
   role: userRoleSchema,
   status: accountStatusSchema,
+  emailVerified: z.boolean(),
   patientId: z.uuid().nullable(),
   doctorId: z.uuid().nullable(),
   doctorVerification: verificationStatusSchema.nullable(),
@@ -72,6 +93,9 @@ export type AccountStatus = z.infer<typeof accountStatusSchema>;
 export type RegisterPatientRequest = z.infer<typeof registerPatientRequestSchema>;
 export type RegisterDoctorRequest = z.infer<typeof registerDoctorRequestSchema>;
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
+export type VerifyEmailRequest = z.infer<typeof verifyEmailRequestSchema>;
+export type ResendOtpRequest = z.infer<typeof resendOtpRequestSchema>;
+export type RegistrationPending = z.infer<typeof registrationPendingSchema>;
 export type AuthUser = z.infer<typeof authUserSchema>;
 export type AuthSession = z.infer<typeof authSessionSchema>;
 export type ErrorResponse = z.infer<typeof errorResponseSchema>;

@@ -102,7 +102,7 @@ export function AppShell({ role, children }: { role: UserRole; children: ReactNo
             })}
           </ul>
         </nav>
-        <div className="border-t border-line p-4 text-xs leading-relaxed text-muted">Academic demo · fictional data only</div>
+        
       </aside>
 
       <div className="flex min-w-0 flex-col">

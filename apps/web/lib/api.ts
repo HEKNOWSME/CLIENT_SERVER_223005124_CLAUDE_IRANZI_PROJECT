@@ -58,6 +58,9 @@ export function describeError(error: unknown): string {
     case 'INVALID_CREDENTIALS': return 'Invalid email or password.';
     case 'ACCOUNT_SUSPENDED': return 'This account is suspended. Please contact an administrator.';
     case 'ACCOUNT_EXISTS': return 'An account with this email already exists. Try signing in instead.';
+    case 'EMAIL_NOT_VERIFIED': return 'Confirm the code we emailed you before signing in.';
+    case 'OTP_INVALID': return error.message;
+    case 'EMAIL_DELIVERY_FAILED': return 'We could not send the verification email. Please try again shortly.';
     case 'RATE_LIMITED': {
       const minutes = error.retryAfterSeconds ? Math.ceil(error.retryAfterSeconds / 60) : null;
       return minutes ? `Too many attempts. Please try again in about ${minutes} minute${minutes === 1 ? '' : 's'}.` : 'Too many attempts. Please wait a moment and try again.';

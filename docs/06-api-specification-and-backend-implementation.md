@@ -182,7 +182,9 @@ All Nest paths below are under **`/v1`**.
 
 | Verb | Route | Who | Purpose |
 |---|---|---|---|
-| POST | `/auth/register/patient` | Public | Create PATIENT + profile |
+| POST | `/auth/register/patient` | Public | Create PATIENT + profile, email OTP (no session) |
+| POST | `/auth/verify-email` | Public | Confirm registration OTP and start session |
+| POST | `/auth/resend-otp` | Public | Resend patient registration OTP |
 | POST | `/auth/register/doctor-request` | Public | Pending doctor request — **no** clinical access |
 | POST | `/auth/login` | Public | Access JWT + refresh cookie |
 | POST | `/auth/refresh` | Refresh cookie + CSRF header | Rotate refresh; new access JWT |
@@ -219,7 +221,7 @@ All Nest paths below are under **`/v1`**.
 
 Refresh token is **cookie-only** (`pmrms_refresh`, `HttpOnly; SameSite=Strict`, plus `Secure` and the `__Host-` prefix in production) and is never returned in JSON. Cookie-authenticated calls (`/auth/refresh`, `/auth/logout`) must send `X-PMRMS-CSRF: 1`; the header forces a CORS preflight that only `WEB_ORIGIN` passes, and any `Origin` header must be the web app or the API itself.
 
-Auth-specific error codes: `INVALID_CREDENTIALS` (401, identical for unknown email and wrong password), `SESSION_EXPIRED` (401), `ACCOUNT_EXISTS` (409), `ACCOUNT_SUSPENDED` (403), `ACCOUNT_PENDING` (403 on routes that need an approved account), `CSRF_REJECTED` (403) and `RATE_LIMITED` (429 with `Retry-After`, also used for lockout after 5 failed sign-ins).
+Auth-specific error codes: `INVALID_CREDENTIALS` (401, identical for unknown email and wrong password), `SESSION_EXPIRED` (401), `ACCOUNT_EXISTS` (409), `ACCOUNT_SUSPENDED` (403), `EMAIL_NOT_VERIFIED` (403), `OTP_INVALID` (400), `EMAIL_DELIVERY_FAILED` (502), `ACCOUNT_PENDING` (403 on routes that need an approved account), `CSRF_REJECTED` (403) and `RATE_LIMITED` (429 with `Retry-After`, also used for lockout after 5 failed sign-ins and OTP resend cooldown).
 
 Demo passwords come from `SEED_DEMO_PASSWORD` in the local `.env`, not from Git.
 

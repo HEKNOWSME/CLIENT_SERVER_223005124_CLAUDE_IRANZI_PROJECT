@@ -1,8 +1,9 @@
 'use client';
 
 import {
-  authSessionSchema, authUserSchema,
+  authSessionSchema, authUserSchema, registrationPendingSchema,
   type AuthSession, type AuthUser, type LoginRequest, type RegisterDoctorRequest, type RegisterPatientRequest,
+  type RegistrationPending, type ResendOtpRequest, type VerifyEmailRequest,
 } from '@pmrms/contracts';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiError, apiRequest, CSRF_HEADERS, jsonBody } from './api';
@@ -16,7 +17,9 @@ type AuthState =
 interface AuthContextValue {
   state: AuthState;
   login(input: LoginRequest): Promise<AuthUser>;
-  registerPatient(input: RegisterPatientRequest): Promise<AuthUser>;
+  registerPatient(input: RegisterPatientRequest): Promise<RegistrationPending>;
+  verifyEmail(input: VerifyEmailRequest): Promise<AuthUser>;
+  resendOtp(input: ResendOtpRequest): Promise<RegistrationPending>;
   registerDoctor(input: RegisterDoctorRequest): Promise<AuthUser>;
   logout(): Promise<void>;
   logoutAllDevices(): Promise<void>;
@@ -128,7 +131,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(() => ({
     state,
     login: input => startSession('/auth/login', input),
-    registerPatient: input => startSession('/auth/register/patient', input),
+    registerPatient: input => apiRequest('/auth/register/patient', jsonBody(input), registrationPendingSchema),
+    verifyEmail: input => startSession('/auth/verify-email', input),
+    resendOtp: input => apiRequest('/auth/resend-otp', jsonBody(input), registrationPendingSchema),
     registerDoctor: input => startSession('/auth/register/doctor-request', input),
     async logout() {
       try { await apiRequest('/auth/logout', { method: 'POST', headers: CSRF_HEADERS }); } finally {

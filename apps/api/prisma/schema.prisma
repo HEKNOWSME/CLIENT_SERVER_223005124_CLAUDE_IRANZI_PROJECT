@@ -59,6 +59,10 @@ enum SessionRevocationReason {
   PASSWORD_CHANGED
 }
 
+enum EmailOtpPurpose {
+  REGISTER_PATIENT
+}
+
 // Infrastructure marker read by the readiness endpoint.
 model SystemCheck {
   id        String   @id
@@ -77,10 +81,13 @@ model User {
   lockedUntil         DateTime?     @map("locked_until") @db.Timestamptz(6)
   lastLoginAt         DateTime?     @map("last_login_at") @db.Timestamptz(6)
   passwordChangedAt   DateTime      @default(now()) @map("password_changed_at") @db.Timestamptz(6)
+  // Null until the patient confirms the email OTP. Seeded and doctor accounts are marked immediately.
+  emailVerifiedAt     DateTime?     @map("email_verified_at") @db.Timestamptz(6)
 
   patient             Patient?
   doctor              Doctor?
   refreshSessions     RefreshSession[]
+  emailOtps           EmailOtp[]
   notifications       Notification[]
   accessLogs          AccessLog[]
   recordRevisions     RecordRevision[]
@@ -95,6 +102,23 @@ model User {
 
   @@index([role, status])
   @@map("users")
+}
+
+model EmailOtp {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String          @map("user_id") @db.Uuid
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose      EmailOtpPurpose
+  codeHash     String          @map("code_hash") @db.VarChar(128)
+  expiresAt    DateTime        @map("expires_at") @db.Timestamptz(6)
+  attemptCount Int             @default(0) @map("attempt_count")
+  consumedAt   DateTime?       @map("consumed_at") @db.Timestamptz(6)
+  lastSentAt   DateTime        @map("last_sent_at") @db.Timestamptz(6)
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId, purpose, consumedAt])
+  @@index([expiresAt])
+  @@map("email_otps")
 }
 
 model Patient {

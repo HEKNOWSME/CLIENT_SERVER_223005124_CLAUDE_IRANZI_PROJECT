@@ -6,11 +6,11 @@
   "engines": { "node": ">=22.12.0", "pnpm": ">=11 <12" },
   "scripts": {
     "env:init": "node scripts/init-env.mjs",
-    "dev": "turbo run dev",
-    "dev:web": "turbo run dev --filter=@pmrms/web",
-    "dev:api": "turbo run dev --filter=@pmrms/api",
-    "build": "turbo run build",
-    "typecheck": "turbo run typecheck",
+    "dev": "pnpm --filter @pmrms/contracts build && pnpm --parallel --filter @pmrms/web --filter @pmrms/api run dev",
+    "dev:web": "pnpm --filter @pmrms/web run dev",
+    "dev:api": "pnpm --filter @pmrms/api run dev",
+    "build": "pnpm --filter @pmrms/contracts build && pnpm --filter @pmrms/api --filter @pmrms/web run build",
+    "typecheck": "pnpm --filter @pmrms/contracts build && pnpm --filter @pmrms/contracts --filter @pmrms/api --filter @pmrms/web run typecheck",
     "db:generate": "pnpm --filter @pmrms/api db:generate",
     "db:migrate": "pnpm --filter @pmrms/api db:migrate",
     "db:migrate:dev": "pnpm --filter @pmrms/api db:migrate:dev",
@@ -21,7 +21,7 @@
     "db:down": "docker compose down",
     "setup:local": "pnpm run env:init && pnpm db:generate && pnpm db:migrate && pnpm db:seed",
     "test:smoke": "node --env-file=.env scripts/smoke.mjs",
-    "test:api": "turbo run build --filter=@pmrms/api && node --test apps/api/test/health.test.cjs"
+    "test:api": "pnpm --filter @pmrms/api run build && node --test apps/api/test/health.test.cjs"
   },
-  "devDependencies": { "turbo": "^2.6.1", "typescript": "5.9.3" }
+  "devDependencies": { "typescript": "5.9.3" }
 }

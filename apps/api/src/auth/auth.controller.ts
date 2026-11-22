@@ -3,7 +3,9 @@ import { ApiBearerAuth, ApiBody, ApiCookieAuth, ApiHeader, ApiOperation, ApiResp
 import { Throttle } from '@nestjs/throttler';
 import {
   authSessionSchema, authUserSchema, loginRequestSchema, registerDoctorRequestSchema, registerPatientRequestSchema,
+  registrationPendingSchema, resendOtpRequestSchema, verifyEmailRequestSchema,
   type AuthSession, type AuthUser, type LoginRequest, type RegisterDoctorRequest, type RegisterPatientRequest,
+  type RegistrationPending, type ResendOtpRequest, type VerifyEmailRequest,
 } from '@pmrms/contracts';
 import type { CookieOptions, Request, Response } from 'express';
 import { AllowPendingAccount, CurrentUser, Public } from '../common/decorators';
@@ -34,16 +36,45 @@ export class AuthController {
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('register/patient')
-  @ApiOperation({ summary: 'Create a PATIENT account and profile, then start a session' })
+  @ApiOperation({ summary: 'Create a PATIENT account and email a one-time verification code. No session until verified.' })
   @ApiBody({ schema: openApiSchema(registerPatientRequestSchema) })
-  @ApiResponse({ status: 201, schema: openApiData(authSessionSchema), description: 'Sets the HttpOnly refresh cookie.' })
+  @ApiResponse({ status: 201, schema: openApiData(registrationPendingSchema) })
   @ApiResponse({ status: 409, description: 'ACCOUNT_EXISTS' })
   async registerPatient(
     @Body(new ZodValidationPipe(registerPatientRequestSchema)) body: RegisterPatientRequest,
     @Req() req: Request,
+  ): Promise<{ data: RegistrationPending }> {
+    return { data: await this.auth.registerPatient(body, clientContext(req)) };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Confirm the registration OTP and start a session' })
+  @ApiBody({ schema: openApiSchema(verifyEmailRequestSchema) })
+  @ApiResponse({ status: 200, schema: openApiData(authSessionSchema), description: 'Sets the HttpOnly refresh cookie.' })
+  @ApiResponse({ status: 400, description: 'OTP_INVALID' })
+  async verifyEmail(
+    @Body(new ZodValidationPipe(verifyEmailRequestSchema)) body: VerifyEmailRequest,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<{ data: AuthSession }> {
-    return this.respond(res, await this.auth.registerPatient(body, clientContext(req)));
+    return this.respond(res, await this.auth.verifyEmail(body, clientContext(req)));
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('resend-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Resend the patient registration OTP (rate limited)' })
+  @ApiBody({ schema: openApiSchema(resendOtpRequestSchema) })
+  @ApiResponse({ status: 200, schema: openApiData(registrationPendingSchema) })
+  async resendOtp(
+    @Body(new ZodValidationPipe(resendOtpRequestSchema)) body: ResendOtpRequest,
+    @Req() req: Request,
+  ): Promise<{ data: RegistrationPending }> {
+    return { data: await this.auth.resendRegistrationOtp(body, clientContext(req)) };
   }
 
   @Public()
@@ -69,7 +100,7 @@ export class AuthController {
   @ApiBody({ schema: openApiSchema(loginRequestSchema) })
   @ApiResponse({ status: 200, schema: openApiData(authSessionSchema) })
   @ApiResponse({ status: 401, description: 'INVALID_CREDENTIALS (same response for unknown email and wrong password)' })
-  @ApiResponse({ status: 403, description: 'ACCOUNT_SUSPENDED' })
+  @ApiResponse({ status: 403, description: 'ACCOUNT_SUSPENDED or EMAIL_NOT_VERIFIED' })
   @ApiResponse({ status: 429, description: 'RATE_LIMITED, including temporary lockout after repeated failures' })
   async login(
     @Body(new ZodValidationPipe(loginRequestSchema)) body: LoginRequest,
