@@ -1,363 +1,96 @@
-# Patient Medical Records Management System (PMRMS)
+# Patient Medical Records Management System
 
-**Academic full-stack project**  
-**Student:** Claude Iranzi · **ID:** 223005124  
-**Course context:** Client–Server systems  
-**Repository:** `CLIENT_SERVER_223005124_CLAUDE_IRANZI_PROJECT`
+**Claude Iranzi · Student ID 223005124 · Client–Server systems**
 
-PMRMS is a secure web application for creating, viewing, organizing, and downloading patient medical records. Approved doctors manage records for assigned patients; administrators manage accounts and assignments; patients review their own history and permitted PDF reports.
+PMRMS is an academic web application for managing fictional patient records. Administrators approve doctors and manage care assignments. Approved doctors create and update records for assigned patients. Patients can see their own history and download their own PDF reports.
 
-> **Local academic demo:** sign in as an administrator, doctor or patient to exercise approvals, care assignments, record timelines and revisions, private PDF reports, diagnosis counts, notifications and audit logs using fictional data.
+## How it works
 
----
-
-## Table of contents
-
-1. [Objectives](#1-objectives)
-2. [Technology stack](#2-technology-stack)
-3. [Repository structure](#3-repository-structure)
-4. [System architecture (current)](#4-system-architecture-current)
-5. [Prerequisites](#5-prerequisites)
-6. [Quick start](#6-quick-start)
-7. [Verification](#7-verification)
-8. [Useful commands](#8-useful-commands)
-9. [Documentation](#9-documentation)
-10. [Development roadmap](#10-development-roadmap)
-11. [Academic & security notes](#11-academic--security-notes)
-
----
-
-## 1. Objectives
-
-| # | Goal |
+| Role | Workspace |
 | --- | --- |
-| 1 | Secure registration, login, logout and refresh-token workflows |
-| 2 | Role separation: Administrator, Doctor, Patient |
-| 3 | Authorized medical-record CRUD with assignment-based access |
-| 4 | Private PDF storage and short-lived download links |
-| 5 | Chronological timeline, filters, diagnosis counts and audit trails |
-| 6 | Realtime UI updates via private broadcast channels |
-| 7 | Defense in depth: NestJS authorization + PostgreSQL RLS |
-| 8 | Documented, tested academic demo suitable for presentation |
+| Administrator | Review doctor applications, suspend and reactivate accounts, manage assignments, and inspect audit logs. |
+| Doctor | View assigned patients, create and revise records, upload PDF reports, archive authored records, and review diagnosis counts. A pending doctor can sign in and check their application status. |
+| Patient | Verify their email, view and filter their medical history, download reports, manage their profile, and read notifications. |
 
-Full functional requirements and business rules live in [`docs/`](docs/).
+The browser uses a Next.js frontend that proxies requests to a NestJS REST API. The API uses shared Zod contracts, Prisma, and PostgreSQL. Passwords are hashed with Argon2id. Access tokens are short-lived and the API rotates the HttpOnly refresh cookie. PostgreSQL row-level security protects clinical rows when the API uses the restricted database login.
 
----
+Patient registration and password recovery use distinct six-digit email codes. Codes expire after 10 minutes by default and have a limited number of attempts. A successful reset updates the password and revokes existing sessions. The hosted setup uses Supabase PostgreSQL, optional private Supabase Realtime notifications, private Cloudflare R2 storage for new PDFs, and Resend for email delivery. The local setup can keep PDFs in PostgreSQL.
 
-## 2. Technology stack
+## Run locally
 
-| Layer | Technology | Role |
-| --- | --- | --- |
-| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS 4 | User interface |
-| Backend | NestJS 11, TypeScript, Swagger / OpenAPI | REST API and business rules |
-| Validation | Zod (shared contracts package) | Typed request/response schemas |
-| Database | PostgreSQL | Persistent data |
-| ORM | Prisma 7 (`@prisma/adapter-pg`) | Models, migrations, queries |
-| Monorepo | pnpm workspaces | Build orchestration |
-| Auth | NestJS JWT (HS256) + rotating refresh cookie + Argon2id | Sessions and password hashing |
-| Storage | PostgreSQL locally | Private PDF content served by the authenticated API |
-| Hosted integrations | Cloudflare R2 and Supabase | Private object storage, PostgreSQL and Broadcast |
-
-**Explicitly out of scope:** Better Auth, Django, Supabase Auth/Storage, payment integrations.
-
----
-
-## 3. Repository structure
-
-```text
-CLIENT_SERVER_223005124_CLAUDE_IRANZI_PROJECT/
-├── apps/
-│   ├── web/                 # Next.js frontend (port 3000)
-│   └── api/                 # NestJS API + Prisma (port 3001)
-├── packages/
-│   ├── contracts/           # Shared Zod schemas and TypeScript types
-│   └── typescript-config/   # Shared strict TS config
-├── docs/                    # Requirements and design baseline
-├── scripts/                 # env bootstrap and smoke tests
-├── docker-compose.yml       # Optional local PostgreSQL via Docker
-├── .env.example             # Environment template (copy → .env)
-└── README.md                # This file
-```
-
-| Path | Purpose |
-| --- | --- |
-| `apps/web` | Browser UI and same-origin `/api/*` proxy to the backend |
-| `apps/api` | REST API, health checks, Prisma schema and migrations |
-| `packages/contracts` | Shared types so frontend and backend stay aligned |
-| `docs/` | Planning documents for features and business rules |
-| `scripts/` | `env:init` (creates `.env`) and `test:smoke` (live checks) |
-
----
-
-## 4. System architecture (current)
-
-```text
-Browser  →  http://localhost:3000
-              │
-              ├─ Next.js UI
-              └─ /api/*  (rewrite proxy, same origin → refresh cookie stays first-party)
-                      │
-                      ▼
-                 NestJS API  →  http://127.0.0.1:3001/v1/...
-                   guards: rate limit → JWT + live account check → roles
-                      │
-                      ▼
-                 Prisma 7 + PostgreSQL database `pmrms`
-                   11 tables · CHECK constraints · integrity triggers · audit log
-```
-
-| URL | Description |
-| --- | --- |
-| http://localhost:3000 | Frontend workspace |
-| http://127.0.0.1:3001/v1/health | API readiness (DB + seed) |
-| http://127.0.0.1:3001/v1/health/live | API process liveness only |
-| http://127.0.0.1:3001/docs | Interactive Swagger documentation |
-| http://127.0.0.1:3001/docs-json | OpenAPI JSON |
-
-Database credentials never leave the server.
-
-### 4.1 Database
-
-| Area | Tables |
-| --- | --- |
-| Identity | `users`, `patients`, `doctors`, `refresh_sessions` |
-| Care relationships | `doctor_patients` (one ACTIVE assignment per pair, full revocation history) |
-| Clinical | `records`, `medical_files`, `record_revisions` |
-| Operations | `access_logs` (append-only), `notifications`, `outbox_events` |
-
-Rules the application must never be trusted to enforce alone are also enforced by PostgreSQL: a profile must match its user's role, record ownership cannot change after insert, audit rows cannot be edited or deleted, emails are stored lowercase, diagnoses cannot be blank, and assignment status always agrees with its revocation fields. Details are in [`docs/04`](docs/04-database-design-erd-and-prisma-schema.md).
-
-### 4.2 Authentication
-
-All routes are under `/v1` (or `/api` through the Next.js proxy). Every route requires a valid access token unless it is explicitly public.
-
-| Method | Route | Access | Result |
-| --- | --- | --- | --- |
-| POST | `/auth/register/patient` | Public | Creates an unverified patient and issues a six-digit OTP |
-| POST | `/auth/verify-email` | Public | Confirms the OTP and starts a session |
-| POST | `/auth/resend-otp` | Public | Resends the patient registration OTP (rate limited) |
-| POST | `/auth/register/doctor-request` | Public | Creates a PENDING doctor applicant (no clinical access) |
-| POST | `/auth/login` | Public | Access JWT in JSON, refresh token in an HttpOnly cookie |
-| POST | `/auth/refresh` | Refresh cookie + `X-PMRMS-CSRF: 1` | Rotates the refresh token and returns a new access JWT |
-| POST | `/auth/logout` | Refresh cookie + `X-PMRMS-CSRF: 1` | Revokes the session, `204` |
-| POST | `/auth/logout-all` | Bearer token | Revokes every session of the user, `204` |
-| GET | `/auth/me` | Bearer token | Current account, read from the database |
-
-Security properties:
-
-- Passwords are hashed with **Argon2id** (19 MiB, 2 iterations). Policy: 12–128 characters with upper case, lower case and a digit.
-- Access tokens last **15 minutes**, are signed with a pinned algorithm and checked for issuer and audience. Every request reloads the account, so suspension and logout take effect immediately.
-- Refresh tokens are random 256-bit values stored only as an HMAC-SHA256 hash. They are **single-use**: replaying a rotated token revokes its whole session family.
-- Unknown emails and wrong passwords get the same response and cost the same time. Five failures lock the account for 15 minutes, and sign-in routes are rate limited per IP.
-- Every sign-in, denial, lockout, logout and token-reuse event is written to `access_logs` with the request ID.
-
-### 4.3 Demo accounts
-
-`pnpm db:seed` creates fictional data from [`docs/04` §13](docs/04-database-design-erd-and-prisma-schema.md): 10 patients, 10 records, 3 approved doctors, 1 pending doctor, 1 administrator and 11 active assignments. All accounts share the password set in `SEED_DEMO_PASSWORD` in `.env`.
-
-| Email | Role / status | Demonstrates |
-| --- | --- | --- |
-| `admin.demo@example.test` | ADMIN / ACTIVE | Approvals and assignments |
-| `doctor.a@example.test` | DOCTOR / APPROVED | Primary clinical demo (patients 1, 2, 6, 10) |
-| `doctor.b@example.test` | DOCTOR / APPROVED | Shares patient 1 with Doctor A and can read its history |
-| `doctor.c@example.test` | DOCTOR / APPROVED | Not assigned to patient 1 (isolation test) |
-| `doctor.pending@example.test` | DOCTOR / PENDING | Signs in to a limited shell only |
-| `patient.a@example.test` | PATIENT / ACTIVE | Own records |
-| `patient.b@example.test` | PATIENT / ACTIVE | Cross-patient denial |
-
-### 4.4 Web application
-
-| Route | Page |
-| --- | --- |
-| `/` | Landing page with live connection status |
-| `/login` | Sign in, then redirect to the role's workspace |
-| `/register` | Patient registration |
-| `/verify-email` | Confirm registration with a six-digit code |
-| `/doctor/apply` | Doctor application (account stays pending) |
-| `/admin`, `/doctor`, `/patient` | Role workspaces with role-specific navigation |
-| `/admin/users`, `/admin/doctors`, `/admin/assignments`, `/admin/audit-logs` | Account suspension, doctor review, care assignment and audit history |
-| `/doctor/patients`, `/doctor/records`, `/doctor/analytics` | Assigned patients, record management and diagnosis counts |
-| `/patient/records` | Own medical history and report downloads |
-| `/{role}/notifications` | Personal notification inbox |
-| `/admin/profile`, `/doctor/profile`, `/patient/profile` | Account details, sign out, sign out of all devices |
-| `/unauthorized` | Shown when a signed-in user opens another role's area |
-
-The browser keeps the access token in memory and restores the session from the HttpOnly cookie after a reload. Where available, the Web Locks API serializes token refreshes across tabs. Forms validate with the same Zod contracts as the API. Pending doctors can check their approval status from their workspace.
-
-Seeded rows use readable fixed IDs, for example patient 1 is `20000000-0000-4000-8000-000000000001` and record 1 is `40000000-0000-4000-8000-000000000001`.
-
----
-
-## 5. Prerequisites
-
-| Tool | Version |
-| --- | --- |
-| Node.js | 22.12+ (24 LTS recommended) |
-| pnpm | 11.15.1 (`packageManager` field) |
-| PostgreSQL | 16+ running locally **or** Docker Desktop |
-
-Create a PostgreSQL database named **`pmrms`** owned by the user in your `.env`.  
-WAMP Apache/MySQL are **not** used by this stack — open the Node ports directly.
-
----
-
-## 6. Quick start
+Use Node.js 22.12 or later, pnpm 11, and PostgreSQL 16 or later. You can use Docker to start PostgreSQL.
 
 ```powershell
-# 1. Install dependencies
 pnpm install --frozen-lockfile
-
-# 2. Create .env from the template (skipped if .env already exists)
-pnpm run env:init
-
-# 3. Edit .env → set DATABASE_URL to your Postgres user/password and database `pmrms`
-#    Example shape:
-#    DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/pmrms?schema=public
-
-# 4. Generate Prisma Client, apply migrations, seed demo data
-pnpm setup:local
-
-# 5. Start frontend + API together
-pnpm dev
+pnpm env:init
 ```
 
-**Optional Docker database** (if you are not using an installed PostgreSQL service):
+For Docker, run `pnpm db:up` and wait for PostgreSQL to accept connections. For an existing PostgreSQL installation, create a fictional demo database named `pmrms` and set `DATABASE_URL` in the root `.env` to its connection string. Use an owner login for this initial setup.
 
 ```powershell
-pnpm db:up          # starts postgres from docker-compose.yml
 pnpm setup:local
 pnpm dev
 ```
 
-Stop the apps with `Ctrl+C`. PostgreSQL keeps running as a service (or Docker container).
-
-### 6.1 Local demo walkthrough
-
-1. Sign in at http://localhost:3000 as `admin.demo@example.test`. Open **Doctor approvals** and **Assignments** to review applicants and connect a doctor to a patient.
-2. In a separate browser profile, sign in as `doctor.a@example.test`. Open **Patients** for assigned histories or **Records** to add a fictional entry. Open the entry to edit, archive or attach a PDF up to 10 MiB.
-3. Sign in as `patient.a@example.test`. Open **Medical history** and select the seeded **Common cold** entry to download the fictional report. The **Notifications** inbox lists updates and supports marking them read.
-4. To demonstrate concurrent edits, open the same record in two sessions for its author. Save one edit, then save the other. The second save returns `409 RECORD_VERSION_CONFLICT`. Use **Reload record** to fetch the saved version.
-
-All seeded accounts use the `SEED_DEMO_PASSWORD` in your local `.env`. On an existing demo database, `pnpm db:seed-report` adds the fictional PDF to record 1 while preserving account states and passwords.
-
-### 6.2 Enforce PostgreSQL RLS in the local API
-
-The clinical migration adds policies for records, PDFs and revisions. PostgreSQL applies those policies to a restricted API role. A table owner can still run migrations and seed fixtures.
-
-1. As your PostgreSQL administrator, create a separate login such as `pmrms_api` with a local password and no owner-role membership. For example, in `psql` run `CREATE ROLE pmrms_api LOGIN;` and then `\password pmrms_api`.
-2. In `.env`, set `DATABASE_MIGRATION_URL` to the existing owner connection string. Set `DATABASE_URL` to the same database using the new API login.
-3. Run `pnpm db:migrate`, then `pnpm db:grant-runtime`. Restart `pnpm dev`.
-
-The quick-start owner connection relies on NestJS authorization. Use the restricted login for an RLS demonstration. Each clinical transaction sets its actor from the verified session and PostgreSQL clears that context when the transaction ends.
-
----
-
-## 7. Verification
-
-With both apps running:
-
-```powershell
-pnpm test:smoke     # frontend, proxy, database, CORS, OpenAPI and the full auth flow
-pnpm test:api       # readiness success / failure unit checks
-pnpm test:workspace # clinical workflows and RLS in an isolated PostgreSQL database
-```
-
-For a quick manual check, `http://127.0.0.1:3001/v1/health` should report the database and seed as ready. `test:workspace` uses the local owner connection with permission to create a database and role. It creates and removes only its uniquely named test fixtures.
-
----
-
-## 7.1 Frontend conventions
-
-The web app is built from one shared component library, so new screens reuse existing pieces instead of copying markup:
-
-| Folder | Contents |
+| URL | Purpose |
 | --- | --- |
-| `apps/web/components/ui/` | Primitives: Button, ButtonLink, TextField, PasswordField, FieldRow, Alert, Badge, Card, CardGrid, PageHeader, Section, DescriptionList, IconTile, EmptyState, ConfirmAction, Spinner |
-| `apps/web/components/layout/` | Page chrome: Brand, AppShell (mobile drawer), AuthLayout/AuthCard, SiteHeader, SiteFooter, NoticePage |
-| `apps/web/components/features/` | Domain components (auth forms, account, dashboard) |
-| `apps/web/lib/` | `useZodForm`, role and navigation config, API client, auth provider, `cn()` |
+| `http://localhost:3000` | Application |
+| `http://127.0.0.1:3001/v1/health` | API, database, and seed readiness |
+| `http://127.0.0.1:3001/docs` | Interactive REST API reference |
 
-Styling uses Tailwind 4 theme tokens defined in `apps/web/app/globals.css`. Every screen is mobile-first and is checked at 375px width. The rules agents follow are in `.cursor/rules/` (`project-conventions`, `frontend-components`, `mobile-responsive`).
+The local `OTP_DELIVERY=local` setting prints codes in the API terminal for fictional accounts. Use separate browser profiles to test multiple sessions. For hosted tests, use an inbox you control and obtain hosted demo credentials from the project owner. Keep real patient data and secrets out of the demo.
 
----
+### Demo accounts
 
-## 8. Useful commands
+All local seeded accounts initially use the `SEED_DEMO_PASSWORD` value in the root `.env`.
 
-| Command | Description |
+| Account | Use in testing |
 | --- | --- |
-| `pnpm dev` | Start web + API in parallel |
-| `pnpm dev:web` / `pnpm dev:api` | Start one app |
-| `pnpm typecheck` | TypeScript check across workspaces |
-| `pnpm build` | Production build |
-| `pnpm db:migrate` | Apply committed migrations |
-| `pnpm db:seed` | Idempotent demo data (re-running resets demo account passwords and lockouts) |
-| `pnpm db:seed-report` | Add the fictional PDF to the existing first demo record |
-| `pnpm db:status` | Migration status |
-| `pnpm db:grant-runtime` | Grant table permissions to the separate API login |
-| `pnpm db:studio` | Prisma Studio GUI |
-| `pnpm db:up` / `pnpm db:down` | Start / stop optional Docker Postgres |
+| `admin.demo@example.test` | Account approvals, assignments, and audits |
+| `doctor.a@example.test` | Approved doctor assigned to Patient A and Patient B |
+| `doctor.b@example.test` | Approved doctor who shares Patient A with Doctor A |
+| `doctor.c@example.test` | Approved doctor without an assignment to Patient A |
+| `doctor.pending@example.test` | Pending doctor approval |
+| `patient.a@example.test` | Patient with the seeded **Common cold** PDF |
+| `patient.b@example.test` | Second patient for checking access isolation |
 
-Environment notes:
+## Manual tests
 
-- Root `.env` is loaded by NestJS, Next.js, Prisma CLI and the seed script.
-- `API_ORIGIN` must match the API host/port used by the Next.js proxy.
-- `WEB_ORIGIN` controls CORS and which origin may call the cookie endpoints.
-- `JWT_ACCESS_SECRET` and `REFRESH_TOKEN_PEPPER` must be different random values of 32+ characters; `pnpm env:init` generates them.
-- Set `OTP_DELIVERY=local` on a loopback development API to display registration codes on screen. To deliver by email, use `OTP_DELIVERY=resend` with `RESEND_API_KEY` and a verified `RESEND_FROM_EMAIL`. Existing environments default to Resend.
-- Restart `pnpm dev` after changing `.env`.
+Use a fresh fictional demo database or disposable accounts for tests that change approval, assignment, or password state. Keep a separate browser profile for each role or session.
 
----
+| # | Test | Steps | Expected result |
+| --- | --- | --- | --- |
+| 1 | Start and sign in | Open the homepage and API health URL. Sign in with each seeded role. Then try an incorrect password. | Health shows the database connected and setup ready. Each user lands in their own workspace. Incorrect credentials show an error. |
+| 2 | Register and verify | Register a fresh fictional patient. Try sign-in before verification, then enter a wrong code. Use **Resend code** after the cooldown and enter the latest code from the inbox or local API terminal. | Sign-in requires verification. The incorrect code is rejected. The latest code opens the patient workspace. The verification form never displays the code. |
+| 3 | Recover a password | Sign in as the newly verified patient in two profiles. In a third profile, open **Forgot password?**. Submit an unknown email, then submit the patient's email. Try a wrong code, then the emailed code and a new password. Try the used code and the old password. | Both requests show the same confirmation. Wrong and used codes fail. The new password works, the old password fails, and both existing sessions lose access on their next API request. |
+| 4 | Refresh and sign out | Reload a signed-in workspace. Sign in from a second profile, sign out normally from the first, then use **Sign out of all devices** with two active sessions. | Reload preserves the session. Ordinary sign-out ends the current session. Signing out of all devices ends both. |
+| 5 | Approve a doctor | Apply through **Doctor application** or use the seeded pending doctor. Try opening **Records**. As admin, approve the applicant in **Doctor approvals**. Refresh or sign in as the doctor. | The applicant starts in a limited workspace. Approval opens the clinical workspace. Patient access follows care assignments. |
+| 6 | Assign and revoke access | As admin, assign the approved applicant to Patient A. As the doctor, open Patient A's history. Revoke the assignment as admin and reopen that history as the doctor. | The history becomes accessible after assignment and unavailable after revocation. |
+| 7 | Create and filter records | As Doctor A, create a fictional entry for Patient A. As Patient A, open **Medical history** and filter by the entry's diagnosis or date. Check **Analytics** as Doctor A. | The matching entry appears in Patient A's history and contributes to the diagnosis count. |
+| 8 | Enforce access boundaries | Attempt to open Patient A's record while signed in as Patient B or Doctor C. Open it as Doctor B and try to edit Doctor A's entry. Try the clinical workspace as admin. | Patient B and Doctor C cannot open the entry. Doctor B can read the shared patient's history and cannot edit another doctor's entry. Admin access is limited to administration. |
+| 9 | Edit and archive | As Doctor A, open the same entry in two sessions. Save an edit in one session, then save stale changes in the other. Reload and archive the entry. | The stale save reports a conflict. The latest version is preserved. The archived entry appears in the archived filter. |
+| 10 | Upload and download a PDF | As Doctor A, attach a fictional PDF up to 10 MiB to an authored record. Try a text file renamed to `.pdf`. Download the valid PDF as Patient A, then try the same record as Patient B. | The valid PDF downloads through the authenticated API. The invalid upload and unauthorized download fail. If R2 is enabled, the new upload also appears in the private bucket. |
+| 11 | Check notifications | While signed in as Patient A, leave the inbox open. As Doctor A, create another record for that patient. Open or refresh the inbox, mark the notification read, then check Patient B's inbox. | Only Patient A receives the notification. With Realtime enabled, the open inbox updates automatically. The read status survives a reload. |
+| 12 | Check suspension and audit | As admin, suspend a disposable patient with a live session. Try a protected page and sign-in as that patient. Reactivate the account and check **Audit logs**. | Suspension blocks existing and new sessions. Reactivation allows a fresh sign-in. The audit page records the account change and other relevant actions. |
+| 13 | Update the patient profile | As a disposable patient, open **Account**, change the fictional name or phone number, save, and reload. | Saved values persist, and only the current patient's profile is editable. |
 
-## 9. Documentation
+## Hosted configuration
 
-| Document | Contents |
+1. On the demo Supabase database, use the owner connection as `DATABASE_MIGRATION_URL` and a separate restricted login as `DATABASE_URL`. Use verified TLS. Disable the Supabase Data API because NestJS serves the application API. Run `pnpm db:migrate` with the owner connection before deploying a version that uses a new migration.
+2. For a new hosted database, run [scripts/supabase-realtime.sql](scripts/supabase-realtime.sql) in the Supabase SQL Editor after migrations. Run `pnpm db:grant-runtime` with both connections configured. The runtime API needs only the restricted database URL. Seed only a database reserved for the fictional demo.
+3. Set `OTP_DELIVERY=resend`, `RESEND_API_KEY`, and `RESEND_FROM_EMAIL` on the API. Use a verified sender and test both registration and recovery with an inbox you control.
+4. To enable private realtime updates, disable public channel access in Supabase and set `REALTIME_PROVIDER=supabase`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_REALTIME_SIGNING_JWK`. The private ES256 JWK must match the active key. The broadcast signals the client to reload authorized data from the API.
+5. To store new PDFs in R2, create a private bucket and a bucket-scoped **Object Read & Write** credential. Set `PDF_STORAGE=r2`, `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY` on the API.
+6. Set `API_ORIGIN` on the web app and `WEB_ORIGIN` on the API to the deployed origins. Use HTTPS for the production refresh cookie. Keep passwords, the Resend key, and signing and storage credentials in server-side environment variables.
+
+## Automated checks
+
+| Command | Coverage |
 | --- | --- |
-| [`docs/01-project-overview-and-functional-requirements_PR.md`](docs/01-project-overview-and-functional-requirements_PR.md) | Vision, stack, objectives, MVP scope, NFRs |
-| [`docs/02-system-actors-use-cases-and-business-rules_PR.md`](docs/02-system-actors-use-cases-and-business-rules_PR.md) | Actors, use cases and business rules |
-| [`docs/03-system-architecture-and-data-flow-diagrams.md`](docs/03-system-architecture-and-data-flow-diagrams.md) | Architecture, DFDs, sequences, RLS, R2, realtime |
-| [`docs/04-database-design-erd-and-prisma-schema.md`](docs/04-database-design-erd-and-prisma-schema.md) | ERD, schema invariants, Prisma 7 models, SQL/RLS, seeds |
-| [`docs/05-authentication-authorization-and-security-design.md`](docs/05-authentication-authorization-and-security-design.md) | AuthN/AuthZ logic, JWT, RLS, R2, realtime, audit, tests |
-| [`docs/06-api-specification-and-backend-implementation.md`](docs/06-api-specification-and-backend-implementation.md) | REST contracts, Nest modules, DTOs, curl kit, tests |
-| [`docs/07-frontend-ui-ux-and-dashboard-design.md`](docs/07-frontend-ui-ux-and-dashboard-design.md) | Role dashboards, timeline UX, states, a11y, UI tests |
-| [`docs/08-testing-deployment-and-academic-presentation.md`](docs/08-testing-deployment-and-academic-presentation.md) | Tests, deployment, demos, presentation, evidence pack |
-| [`docs/09-hosted-integrations.md`](docs/09-hosted-integrations.md) | Supabase, Cloudflare R2 and Resend setup and verification |
+| `pnpm typecheck` | TypeScript across the workspace |
+| `pnpm build` | Production API and web builds |
+| `pnpm test:api` | API unit tests, including readiness, R2, and Realtime signing |
+| `pnpm test:smoke` | Running web app, API proxy, and session checks against a seeded local demo |
+| `pnpm test:workspace` | Auth and password recovery, clinical workflows, and row-level security in an isolated local PostgreSQL database |
 
-These documents describe the full design. The local demo uses the setup and storage described in this README.
-
----
-
-## 10. Development roadmap
-
-| Stage | Status | Deliverable |
-| --- | --- | --- |
-| 0 — Local foundation | **Done** | Monorepo, PostgreSQL, Prisma, health checks, OpenAPI, shared UI component library |
-| 1 — Authentication | **Done locally** | JWT auth, refresh sessions, role workspaces and patient OTP delivery |
-| 2 — Clinical domain | **Done locally** | Record timelines, versioned edits, archive, assignments, analytics and audit logs |
-| 3 — Authorization & RLS | **Done locally** | API authorization and PostgreSQL policies verified with a restricted role |
-| 4 — Documents | **Done locally** | Authenticated PDF upload and download using PostgreSQL |
-| 5 — Hosted demo | Integration code available | Supabase and R2 require provider setup and live verification |
-
----
-
-## 11. Academic & security notes
-
-- This is an **academic prototype**. Do **not** store real patient data.
-- All seeded people, diagnoses and accounts are fictional (`example.test` addresses).
-- `.env` contains secrets and is gitignored; share `.env.example` only.
-- The seed refuses to run when `NODE_ENV=production`.
-- Prefer least-privilege database roles (LOGIN, no SUPERUSER / CREATEDB for the app user).
-
-### Troubleshooting
-
-| Symptom | Check |
-| --- | --- |
-| Database unavailable | PostgreSQL service running? `DATABASE_URL` correct? `pnpm db:status` |
-| Setup incomplete | Run `pnpm db:seed` |
-| Port already in use | Free ports 3000 / 3001 or update ports and origins together |
-| Smoke test fails | Ensure `pnpm dev` is running and `pnpm db:seed` has been run before `pnpm test:smoke` |
-| Login returns `429` | Rate limit or lockout; wait (see `Retry-After`) or re-run `pnpm db:seed` to reset demo accounts |
-
----
-
-**Author:** Claude Iranzi (223005124)  
-**Project:** Patient Medical Records Management System — Client–Server academic demonstration
+The isolated suite requires a local `DATABASE_MIGRATION_URL` or `DATABASE_URL` whose PostgreSQL login can create a test database and role.

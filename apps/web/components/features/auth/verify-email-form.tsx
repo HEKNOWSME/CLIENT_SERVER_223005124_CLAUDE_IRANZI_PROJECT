@@ -15,16 +15,10 @@ export function VerifyEmailForm() {
   const router = useRouter();
   const params = useSearchParams();
   const email = (params.get('email') ?? '').trim().toLowerCase();
-  const debugKey = `pmrms-local-otp:${email}`;
-  const [debugCode, setDebugCode] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [resendError, setResendError] = useState<string | null>(null);
   const [resending, setResending] = useState(false);
   const [cooldown, setCooldown] = useState(0);
-
-  useEffect(() => {
-    setDebugCode(sessionStorage.getItem(debugKey));
-  }, [debugKey]);
 
   useEffect(() => {
     if (!cooldown) return;
@@ -36,10 +30,7 @@ export function VerifyEmailForm() {
     schema: verifyEmailRequestSchema,
     read: data => ({ email: data.get('email'), code: data.get('code') }),
     submit: verifyEmail,
-    onSuccess: user => {
-      sessionStorage.removeItem(debugKey);
-      router.replace(HOME_BY_ROLE[user.role]);
-    },
+    onSuccess: user => router.replace(HOME_BY_ROLE[user.role]),
   });
 
   async function onResend() {
@@ -48,13 +39,8 @@ export function VerifyEmailForm() {
     setResendError(null);
     setInfo(null);
     try {
-      const pending = await resendOtp({ email });
-      if (pending.debugCode) {
-        sessionStorage.setItem(debugKey, pending.debugCode);
-        setDebugCode(pending.debugCode);
-      } else {
-        setInfo('A new code was sent. Check your inbox.');
-      }
+      await resendOtp({ email });
+      setInfo('If this address is awaiting verification, a new code will arrive by email.');
       setCooldown(60);
     } catch (error) {
       if (error instanceof ApiError && error.code === 'RATE_LIMITED' && error.retryAfterSeconds) setCooldown(error.retryAfterSeconds);
@@ -76,7 +62,6 @@ export function VerifyEmailForm() {
   return (
     <form onSubmit={form.onSubmit} noValidate className="grid gap-5">
       <Alert tone="info">Enter the 6-digit verification code for <strong className="break-all">{email}</strong>.</Alert>
-      {debugCode ? <Alert tone="warning" title="Local verification code">{debugCode}</Alert> : null}
       {info ? <Alert tone="success">{info}</Alert> : null}
       {form.formError ? <Alert tone="error">{form.formError}</Alert> : null}
       {resendError ? <Alert tone="error">{resendError}</Alert> : null}
@@ -87,7 +72,6 @@ export function VerifyEmailForm() {
         inputMode="numeric"
         autoComplete="one-time-code"
         maxLength={6}
-        placeholder="123456"
         required
         error={form.errors.code}
       />

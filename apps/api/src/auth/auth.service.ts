@@ -1,7 +1,7 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import type {
-  AuthSession, AuthUser, LoginRequest, RegisterDoctorRequest, RegisterPatientRequest,
-  RegistrationPending, ResendOtpRequest, VerifyEmailRequest,
+  AuthSession, AuthUser, ForgotPasswordRequest, LoginRequest, RegisterDoctorRequest, RegisterPatientRequest,
+  RegistrationPending, ResendOtpRequest, ResetPasswordRequest, VerifyEmailRequest,
 } from '@pmrms/contracts';
 import { randomUUID } from 'node:crypto';
 import { AuditService } from '../audit/audit.service';
@@ -25,10 +25,13 @@ export interface IssuedSession { session: AuthSession; refreshToken: string }
 const invalidCredentials = () => new AppException(HttpStatus.UNAUTHORIZED, 'INVALID_CREDENTIALS', 'Email or password is incorrect.');
 const sessionExpired = () => new AppException(HttpStatus.UNAUTHORIZED, 'SESSION_EXPIRED', 'Your session has expired. Please sign in again.');
 const accountExists = () => new AppException(HttpStatus.CONFLICT, 'ACCOUNT_EXISTS', 'An account with these details already exists.');
+const invalidOtp = () => new AppException(HttpStatus.BAD_REQUEST, 'OTP_INVALID', 'That code is invalid or has expired. Request a new one.');
 const isUniqueViolation = (error: unknown) => (error as { code?: string })?.code === 'P2002';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly passwords: PasswordService,
@@ -82,27 +85,30 @@ export class AuthService {
       }
     }
 
-    const issued = await this.otps.issue(userId, input.email, 'REGISTER_PATIENT');
+    await this.otps.issue(userId, input.email, 'REGISTER_PATIENT');
     await this.audit.record({ action: 'AUTH_REGISTER_PATIENT', outcome: 'SUCCESS', actorUserId: userId, reasonCode: 'OTP_SENT', context });
-    return { status: 'PENDING_EMAIL_VERIFICATION', email: input.email, expiresIn: issued.expiresIn, ...(issued.debugCode ? { debugCode: issued.debugCode } : {}) };
+    return { status: 'PENDING_EMAIL_VERIFICATION', email: input.email, expiresIn: env.OTP_TTL_MINUTES * 60 };
   }
 
   async verifyEmail(input: VerifyEmailRequest, context: ClientContext): Promise<IssuedSession> {
     const user = await this.prisma.user.findUnique({ where: { email: input.email }, include: userWithProfiles });
     // Same generic response whether the email is unknown or already verified, to limit enumeration.
     if (!user || user.role !== 'PATIENT' || user.emailVerifiedAt) {
-      throw new AppException(HttpStatus.BAD_REQUEST, 'OTP_INVALID', 'That code is invalid or has expired. Request a new one.');
+      throw invalidOtp();
     }
     if (user.status === 'SUSPENDED') {
       throw new AppException(HttpStatus.FORBIDDEN, 'ACCOUNT_SUSPENDED', 'This account is suspended. Contact an administrator.');
     }
 
-    await this.otps.consume(user.id, 'REGISTER_PATIENT', input.code);
-    const verified = await this.prisma.user.update({
-      where: { id: user.id },
-      data: { emailVerifiedAt: new Date() },
-      include: userWithProfiles,
+    const verified = await this.prisma.$transaction(async tx => {
+      if (!await this.otps.consume(tx, user.id, 'REGISTER_PATIENT', input.code)) return null;
+      const updated = await tx.user.updateMany({
+        where: { id: user.id, emailVerifiedAt: null, status: 'ACTIVE' },
+        data: { emailVerifiedAt: new Date() },
+      });
+      return updated.count === 1 ? tx.user.findUnique({ where: { id: user.id }, include: userWithProfiles }) : null;
     });
+    if (!verified) throw invalidOtp();
     await this.audit.record({ action: 'AUTH_VERIFY_EMAIL', outcome: 'SUCCESS', actorUserId: user.id, context });
     return this.startSession(verified, context);
   }
@@ -113,9 +119,59 @@ export class AuthService {
     if (!user || user.role !== 'PATIENT' || user.emailVerifiedAt || user.status === 'SUSPENDED') {
       return { status: 'PENDING_EMAIL_VERIFICATION', email: input.email, expiresIn: env.OTP_TTL_MINUTES * 60 };
     }
-    const issued = await this.otps.issue(user.id, input.email, 'REGISTER_PATIENT');
+    await this.otps.issue(user.id, input.email, 'REGISTER_PATIENT');
     await this.audit.record({ action: 'AUTH_RESEND_OTP', outcome: 'SUCCESS', actorUserId: user.id, context });
-    return { status: 'PENDING_EMAIL_VERIFICATION', email: input.email, expiresIn: issued.expiresIn, ...(issued.debugCode ? { debugCode: issued.debugCode } : {}) };
+    return { status: 'PENDING_EMAIL_VERIFICATION', email: input.email, expiresIn: env.OTP_TTL_MINUTES * 60 };
+  }
+
+  forgotPassword(input: ForgotPasswordRequest, context: ClientContext): void {
+    // Never make the public response wait on account lookup, cooldown, or the email provider.
+    setImmediate(() => {
+      void this.sendPasswordResetCode(input.email, context).catch(() => {
+        this.logger.error(`Password reset request failed (request ${context.requestId})`);
+      });
+    });
+  }
+
+  private async sendPasswordResetCode(email: string, context: ClientContext): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { email, emailVerifiedAt: { not: null }, status: { not: 'SUSPENDED' } },
+      select: { id: true },
+    });
+    if (!user) return;
+    try {
+      await this.otps.issue(user.id, email, 'RESET_PASSWORD');
+    } catch (error) {
+      if (error instanceof AppException && ['RATE_LIMITED', 'EMAIL_DELIVERY_FAILED'].includes(error.code)) return;
+      throw error;
+    }
+    await this.audit.record({ action: 'AUTH_PASSWORD_RESET_REQUEST', outcome: 'SUCCESS', actorUserId: user.id, context });
+  }
+
+  async resetPassword(input: ResetPasswordRequest, context: ClientContext): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { email: input.email, emailVerifiedAt: { not: null }, status: { not: 'SUSPENDED' } },
+      select: { id: true },
+    });
+    if (!user) throw invalidOtp();
+
+    const changed = await this.prisma.$transaction(async tx => {
+      if (!await this.otps.consume(tx, user.id, 'RESET_PASSWORD', input.code)) return false;
+      const passwordHash = await this.passwords.hash(input.password);
+      const now = new Date();
+      const updated = await tx.user.updateMany({
+        where: { id: user.id, email: input.email, emailVerifiedAt: { not: null }, status: { not: 'SUSPENDED' } },
+        data: { passwordHash, passwordChangedAt: now, failedLoginAttempts: 0, lockedUntil: null },
+      });
+      if (updated.count !== 1) return false;
+      await tx.refreshSession.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: now, revokedReason: 'PASSWORD_CHANGED' },
+      });
+      return true;
+    });
+    if (!changed) throw invalidOtp();
+    await this.audit.record({ action: 'AUTH_PASSWORD_RESET', outcome: 'SUCCESS', actorUserId: user.id, context });
   }
 
   /** Doctor applicants get a PENDING account: they can sign in, but have no clinical access until approved. */
@@ -172,9 +228,9 @@ export class AuthService {
       throw new AppException(HttpStatus.FORBIDDEN, 'EMAIL_NOT_VERIFIED', 'Confirm the code we emailed you before signing in.');
     }
 
-    await this.prisma.user.update({ where: { id: user.id }, data: { failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: now } });
+    const issued = await this.startSession(user, context, now);
     await this.audit.record({ action: 'AUTH_LOGIN', outcome: 'SUCCESS', actorUserId: user.id, context });
-    return this.startSession(user, context);
+    return issued;
   }
 
   /**
@@ -208,6 +264,7 @@ export class AuthService {
     const successorId = randomUUID();
     const successorToken = this.tokens.createRefreshToken();
     const rotated = await this.prisma.$transaction(async tx => {
+      if (!await this.lockCurrentCredentials(tx, current.user)) throw sessionExpired();
       const consumed = await tx.refreshSession.updateMany({
         where: { id: current.id, revokedAt: null },
         data: { revokedAt: now, revokedReason: 'ROTATED', replacedById: successorId, lastUsedAt: now },
@@ -261,21 +318,42 @@ export class AuthService {
     return this.toAuthUser(user);
   }
 
-  private async startSession(user: UserWithProfiles, context: ClientContext): Promise<IssuedSession> {
+  private async startSession(user: UserWithProfiles, context: ClientContext, loginAt?: Date): Promise<IssuedSession> {
     const familyId = randomUUID();
     const refreshToken = this.tokens.createRefreshToken();
-    await this.prisma.refreshSession.create({
-      data: {
-        userId: user.id,
-        familyId,
-        tokenHash: this.tokens.hashRefreshToken(refreshToken),
-        expiresAt: this.tokens.refreshExpiry(),
-        ipAddress: context.ipAddress,
-        userAgent: context.userAgent,
-      },
+    await this.prisma.$transaction(async tx => {
+      if (loginAt) {
+        const updated = await tx.user.updateMany({
+          where: { id: user.id, passwordHash: user.passwordHash, status: { not: 'SUSPENDED' } },
+          data: { failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: loginAt },
+        });
+        if (updated.count !== 1) throw invalidCredentials();
+      } else if (!await this.lockCurrentCredentials(tx, user)) {
+        throw sessionExpired();
+      }
+      await tx.refreshSession.create({
+        data: {
+          userId: user.id,
+          familyId,
+          tokenHash: this.tokens.hashRefreshToken(refreshToken),
+          expiresAt: this.tokens.refreshExpiry(),
+          ipAddress: context.ipAddress,
+          userAgent: context.userAgent,
+        },
+      });
     });
     const accessToken = await this.tokens.signAccessToken(user.id, user.role, familyId);
     return { session: this.toSession(user, accessToken), refreshToken };
+  }
+
+  // Lock the user before the session row so password reset can revoke every in-flight session.
+  private async lockCurrentCredentials(tx: Prisma.TransactionClient, user: UserWithProfiles): Promise<boolean> {
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM users
+      WHERE id = ${user.id}::uuid AND password_hash = ${user.passwordHash} AND status <> 'SUSPENDED'
+      FOR SHARE
+    `;
+    return rows.length === 1;
   }
 
   private async recordFailedLogin(userId: string): Promise<void> {

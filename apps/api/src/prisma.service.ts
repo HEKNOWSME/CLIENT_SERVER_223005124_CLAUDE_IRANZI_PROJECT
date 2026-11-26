@@ -5,6 +5,7 @@ import { env } from './config';
 
 const host = new URL(env.DATABASE_URL).hostname;
 const supabaseDatabase = host.endsWith('.supabase.co') || host.endsWith('.pooler.supabase.com');
+const databaseCa = process.env.DATABASE_SSL_CA;
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
@@ -14,13 +15,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       max: env.DATABASE_POOL_MAX,
       connectionTimeoutMillis: 5000,
       idleTimeoutMillis: 30000,
-      ssl: {
-    rejectUnauthorized: true,
-    ca: Buffer.from(
-      process.env.DATABASE_SSL_CA!,
-      'base64',
-    ).toString('utf8'),
-  },
+      ...(supabaseDatabase && databaseCa ? {
+        ssl: { rejectUnauthorized: true, ca: Buffer.from(databaseCa, 'base64').toString('utf8') },
+      } : {}),
       ...(supabaseDatabase ? {} : { options: '-c statement_timeout=5000' }),
     }) });
   }
@@ -42,7 +39,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             AND tgname = 'pmrms_notification_broadcast' AND tgenabled IN ('O', 'A')) AS broadcast_ready
       `;
       if (!checks?.restricted || !checks.api_roles_blocked || (env.REALTIME_PROVIDER === 'supabase' && !checks.broadcast_ready)) {
-        throw new Error('Hosted PostgreSQL permissions or Realtime setup are incomplete. See docs/09-hosted-integrations.md.');
+        throw new Error('Hosted PostgreSQL permissions or Realtime setup are incomplete. See README.md.');
       }
     }
   }

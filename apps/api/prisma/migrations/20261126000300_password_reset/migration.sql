@@ -1,0 +1,1 @@
+ALTER TYPE "EmailOtpPurpose" ADD VALUE 'RESET_PASSWORD';

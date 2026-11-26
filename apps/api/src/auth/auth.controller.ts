@@ -2,10 +2,10 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res, UseGuards 
 import { ApiBearerAuth, ApiBody, ApiCookieAuth, ApiHeader, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import {
-  authSessionSchema, authUserSchema, loginRequestSchema, registerDoctorRequestSchema, registerPatientRequestSchema,
-  registrationPendingSchema, resendOtpRequestSchema, verifyEmailRequestSchema,
-  type AuthSession, type AuthUser, type LoginRequest, type RegisterDoctorRequest, type RegisterPatientRequest,
-  type RegistrationPending, type ResendOtpRequest, type VerifyEmailRequest,
+  authSessionSchema, authUserSchema, forgotPasswordRequestSchema, loginRequestSchema, registerDoctorRequestSchema, registerPatientRequestSchema,
+  registrationPendingSchema, resendOtpRequestSchema, resetPasswordRequestSchema, verifyEmailRequestSchema,
+  type AuthSession, type AuthUser, type ForgotPasswordRequest, type LoginRequest, type RegisterDoctorRequest, type RegisterPatientRequest,
+  type RegistrationPending, type ResendOtpRequest, type ResetPasswordRequest, type VerifyEmailRequest,
 } from '@pmrms/contracts';
 import type { CookieOptions, Request, Response } from 'express';
 import { AllowPendingAccount, CurrentUser, Public } from '../common/decorators';
@@ -75,6 +75,35 @@ export class AuthController {
     @Req() req: Request,
   ): Promise<{ data: RegistrationPending }> {
     return { data: await this.auth.resendRegistrationOtp(body, clientContext(req)) };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Request a password reset code. Returns the same response for any valid email.' })
+  @ApiBody({ schema: openApiSchema(forgotPasswordRequestSchema) })
+  @ApiResponse({ status: 204 })
+  forgotPassword(
+    @Body(new ZodValidationPipe(forgotPasswordRequestSchema)) body: ForgotPasswordRequest,
+    @Req() req: Request,
+  ): void {
+    this.auth.forgotPassword(body, clientContext(req));
+  }
+
+  @Public()
+  @Throttle(AUTH_RATE)
+  @Post('reset-password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Set a new password using an emailed code and revoke the account’s sessions' })
+  @ApiBody({ schema: openApiSchema(resetPasswordRequestSchema) })
+  @ApiResponse({ status: 204 })
+  @ApiResponse({ status: 400, description: 'OTP_INVALID' })
+  async resetPassword(
+    @Body(new ZodValidationPipe(resetPasswordRequestSchema)) body: ResetPasswordRequest,
+    @Req() req: Request,
+  ): Promise<void> {
+    await this.auth.resetPassword(body, clientContext(req));
   }
 
   @Public()

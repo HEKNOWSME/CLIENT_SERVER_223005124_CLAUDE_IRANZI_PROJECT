@@ -2,7 +2,7 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 
 export interface ErrorDetail { path: string; message: string }
 
-/** An HTTP error with a stable machine-readable `code` (see docs/06 section 13). */
+/** An HTTP error with a stable machine-readable code. */
 export class AppException extends HttpException {
   constructor(
     status: HttpStatus,

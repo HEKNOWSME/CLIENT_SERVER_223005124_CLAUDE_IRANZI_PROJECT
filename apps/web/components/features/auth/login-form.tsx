@@ -32,6 +32,7 @@ export function LoginForm() {
 
   return (
     <form onSubmit={form.onSubmit} noValidate className="grid gap-5">
+      {params.get('passwordReset') === '1' ? <Alert tone="success">Password reset. Sign in with your new password.</Alert> : null}
       {params.get('expired') ? <Alert tone="info">Your session ended. Please sign in again to continue.</Alert> : null}
       {unverifiedEmail ? (
         <Alert tone="warning" title="Email not confirmed yet.">
@@ -43,6 +44,9 @@ export function LoginForm() {
       ) : form.formError ? <Alert tone="error">{form.formError}</Alert> : null}
       <TextField label="Email" name="email" type="email" autoComplete="email" inputMode="email" required error={form.errors.email} />
       <PasswordField label="Password" name="password" autoComplete="current-password" required error={form.errors.password} />
+      <Link href="/forgot-password" className="justify-self-end text-sm font-semibold text-brand-700 underline-offset-4 hover:underline">
+        Forgot password?
+      </Link>
       <Button type="submit" variant="primary" size="lg" fullWidth loading={form.pending} loadingText="Signing in…" icon={<LogIn className="size-5" aria-hidden="true" />}>
         Sign in
       </Button>

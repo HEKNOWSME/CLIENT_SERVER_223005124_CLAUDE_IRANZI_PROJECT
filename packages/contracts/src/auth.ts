@@ -51,13 +51,16 @@ export const resendOtpRequestSchema = z.object({
   email: emailSchema,
 }).strict();
 
+export const forgotPasswordRequestSchema = resendOtpRequestSchema;
+export const resetPasswordRequestSchema = verifyEmailRequestSchema.extend({
+  password: passwordSchema,
+});
+
 /** Returned after patient registration until the email OTP is confirmed. No session is issued yet. */
 export const registrationPendingSchema = z.object({
   status: z.literal('PENDING_EMAIL_VERIFICATION'),
   email: z.email(),
   expiresIn: z.number().int().positive(),
-  // Only present outside production so local testing can proceed without reading the inbox.
-  debugCode: z.string().regex(/^\d{6}$/).optional(),
 });
 
 export const authUserSchema = z.object({
@@ -95,6 +98,8 @@ export type RegisterDoctorRequest = z.infer<typeof registerDoctorRequestSchema>;
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 export type VerifyEmailRequest = z.infer<typeof verifyEmailRequestSchema>;
 export type ResendOtpRequest = z.infer<typeof resendOtpRequestSchema>;
+export type ForgotPasswordRequest = z.infer<typeof forgotPasswordRequestSchema>;
+export type ResetPasswordRequest = z.infer<typeof resetPasswordRequestSchema>;
 export type RegistrationPending = z.infer<typeof registrationPendingSchema>;
 export type AuthUser = z.infer<typeof authUserSchema>;
 export type AuthSession = z.infer<typeof authSessionSchema>;

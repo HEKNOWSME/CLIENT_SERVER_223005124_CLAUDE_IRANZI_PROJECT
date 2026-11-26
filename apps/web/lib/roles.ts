@@ -9,7 +9,7 @@ export const HOME_BY_ROLE: Record<UserRole, string> = { ADMIN: '/admin', DOCTOR:
 
 export interface NavItem { label: string; href: string; icon: LucideIcon; ready: boolean; clinical?: boolean }
 
-// Mirrors docs/07 section 4. Admin has no clinical entries at all. Set `ready: true` when a page ships.
+// Set `ready: true` when a workspace page ships.
 export const NAV_BY_ROLE: Record<UserRole, NavItem[]> = {
   ADMIN: [
     { label: 'Overview', href: '/admin', icon: LayoutDashboard, ready: true },

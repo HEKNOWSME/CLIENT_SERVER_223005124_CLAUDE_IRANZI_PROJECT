@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Design tokens (docs/07 section 3). Use these through Tailwind utilities, e.g. bg-surface, text-muted, border-line. */
+/* Use these design tokens through Tailwind utilities such as bg-surface, text-muted, and border-line. */
 @theme {
   --color-canvas: #f5f7f8;
   --color-surface: #ffffff;

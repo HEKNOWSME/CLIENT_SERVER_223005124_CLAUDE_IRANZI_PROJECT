@@ -29,7 +29,17 @@ const adminDb = new Client({ connectionString: owner.href });
 let roleCreated = false;
 let databaseCreated = false;
 let api;
+const localCodes = new Map();
 const simulatedRoles = [];
+
+async function takeLocalCode(purpose, email) {
+  const key = `${purpose} ${email}`;
+  for (let i = 0; i < 50 && !localCodes.has(key); i++) await delay(20);
+  const code = localCodes.get(key);
+  localCodes.delete(key);
+  assert.ok(code, `Expected a local ${purpose} code in the API terminal`);
+  return code;
+}
 
 function runNode(file, args, env) {
   const result = spawnSync(process.execPath, [file, ...args], { cwd: apiDir, env, stdio: 'inherit' });
@@ -218,13 +228,16 @@ async function verify(origin) {
   await call(`/admin/users/${patientAccount}/status`, { token: admin, method: 'PATCH', body: { status: 'SUSPENDED' } });
   await call('/records', { token: patient, status: 401 });
   await call(`/admin/users/${patientAccount}/status`, { token: admin, method: 'PATCH', body: { status: 'ACTIVE' } });
-  await login('patient.a@example.test');
+  const reactivated = await login('patient.a@example.test');
   const email = 'workspace-test@example.test';
   const registration = await call('/auth/register/patient', {
     method: 'POST', status: 201, body: { email, password, fullName: 'Fictional Patient', birthDate: '2000-01-01' },
   });
-  assert.match(registration.debugCode, /^\d{6}$/);
-  const verified = await call('/auth/verify-email', { method: 'POST', body: { email, code: registration.debugCode } });
+  assert.ok(!Object.hasOwn(registration, 'debugCode'));
+  const registrationCode = await takeLocalCode('REGISTER_PATIENT', email);
+  const verification = await call('/auth/verify-email', { method: 'POST', body: { email, code: registrationCode }, raw: true });
+  const { data: verified } = await verification.json();
+  const cookie = verification.headers.get('set-cookie').split(';')[0];
   assert.equal(verified.user.emailVerified, true);
   await call('/patients/me', {
     token: verified.accessToken, method: 'PATCH', body: { fullName: 'Fictional Updated', birthDate: '2001-01-01', phone: '+250 123 456 789' },
@@ -233,14 +246,51 @@ async function verify(origin) {
   assert.equal((await call('/auth/me', { token: verified.accessToken })).name, 'Fictional Updated');
   await call(`/patients/${patientId}`, { token: verified.accessToken, status: 404 });
   assert.ok((await call(`/patients/${patientId}/records`, { token: doctor })).items.some(row => row.id === id(4, 1)));
-  console.log('PASS approvals, assignment and revocation, suspension and reactivation, and local OTP');
+  console.log('PASS approvals, assignment and revocation, suspension and reactivation, and email verification');
+
+  const requestReset = email => call('/auth/forgot-password', { method: 'POST', status: 204, body: { email } });
+  await requestReset('unknown@example.test');
+  assert.equal(localCodes.size, 0);
+  await requestReset(email);
+  const code = await takeLocalCode('RESET_PASSWORD', email);
+  await requestReset(email);
+  const newPassword = 'WorkspaceReset' + randomBytes(12).toString('hex') + '9';
+  const resetBody = { email, code, password: newPassword };
+  await call('/auth/reset-password', {
+    method: 'POST', status: 400, code: 'OTP_INVALID',
+    body: { ...resetBody, code: code === '000000' ? '111111' : '000000' },
+  });
+  const reset = () => fetch(origin + '/v1/auth/reset-password', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(resetBody), signal: AbortSignal.timeout(15000),
+  });
+  const resets = await Promise.all([reset(), reset()]);
+  assert.deepEqual(resets.map(response => response.status).sort(), [204, 400]);
+  assert.equal((await resets.find(response => response.status === 400).json()).code, 'OTP_INVALID');
+  await call('/auth/me', { token: verified.accessToken, status: 401 });
+  const refresh = await fetch(origin + '/v1/auth/refresh', {
+    method: 'POST', headers: { Cookie: cookie, 'X-PMRMS-CSRF': '1' }, signal: AbortSignal.timeout(15000),
+  });
+  assert.equal(refresh.status, 401);
+  await call('/auth/login', { method: 'POST', body: { email, password }, status: 401, code: 'INVALID_CREDENTIALS' });
+  await call('/auth/login', { method: 'POST', body: { email, password: newPassword } });
+  const audit = (await call('/admin/audit-logs', { token: admin })).items;
+  assert.ok(audit.some(row => row.action === 'AUTH_PASSWORD_RESET' && row.outcome === 'SUCCESS'));
+  await withDb(testOwner, async db => {
+    const { rows: [row] } = await db.query(
+      "SELECT count(*)::int AS count FROM email_otps WHERE user_id = $1 AND purpose = 'RESET_PASSWORD'",
+      [verified.user.id],
+    );
+    assert.equal(row.count, 1, 'Cooldown suppresses a second code');
+  });
+  console.log('PASS password reset request privacy, cooldown, code reuse, session revocation, and new password');
 
   await withDb(testRuntime, async db => {
     assert.equal((await db.query('SELECT count(*)::int AS count FROM records')).rows[0].count, 0);
     assert.equal((await db.query('SELECT count(*)::int AS count FROM medical_files')).rows[0].count, 0);
     await db.query('BEGIN');
     try {
-      const actor = (await call('/auth/me', { token: await login('patient.a@example.test') })).id;
+      const actor = (await call('/auth/me', { token: reactivated })).id;
       await db.query("SELECT set_config('pmrms.actor_id', $1, true)", [actor]);
       const visible = await db.query('SELECT patient_id FROM records');
       assert.ok(visible.rows.length > 0);
@@ -266,7 +316,18 @@ try {
   runNode('node_modules/prisma/build/index.js', ['migrate', 'deploy'], env);
   runNode('node_modules/ts-node/dist/bin.js', ['prisma/seed.ts'], env);
   await withDb(testOwner, db => grantRuntime(db, roleName));
-  api = spawn(process.execPath, ['dist/main.js'], { cwd: apiDir, env, stdio: ['ignore', 'ignore', 'inherit'] });
+  api = spawn(process.execPath, ['dist/main.js'], { cwd: apiDir, env, stdio: ['ignore', 'pipe', 'inherit'] });
+  let pendingOutput = '';
+  const startupOutput = [];
+  api.stdout.setEncoding('utf8').on('data', chunk => {
+    const lines = (pendingOutput + chunk).split('\n');
+    pendingOutput = lines.pop();
+    for (const line of lines) {
+      const match = line.match(/Local OTP (\w+ \S+): (\d{6})/);
+      if (match) localCodes.set(match[1], match[2]);
+      else if (startupOutput.length < 40) startupOutput.push(line.trimEnd());
+    }
+  });
   const origin = `http://127.0.0.1:${port}`;
   let ready = false;
   for (let i = 0; i < 70 && api.exitCode === null; i++) {
@@ -275,7 +336,7 @@ try {
     if (response?.ok) { ready = true; break; }
     await delay(150);
   }
-  assert.ok(ready, 'The isolated API did not become ready.');
+  assert.ok(ready, `The isolated API did not become ready.\n${startupOutput.join('\n')}`);
   await verify(origin);
   await verifyBroadcastSql();
 } finally {

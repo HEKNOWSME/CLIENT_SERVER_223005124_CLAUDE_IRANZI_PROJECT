@@ -11,3 +11,4 @@ coverage/
 .local/
 apps/api/src/generated/
 *.log
+/docs/

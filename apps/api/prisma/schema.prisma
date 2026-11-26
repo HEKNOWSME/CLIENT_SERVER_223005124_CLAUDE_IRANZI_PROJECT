@@ -61,6 +61,7 @@ enum SessionRevocationReason {
 
 enum EmailOtpPurpose {
   REGISTER_PATIENT
+  RESET_PASSWORD
 }
 
 // Infrastructure marker read by the readiness endpoint.

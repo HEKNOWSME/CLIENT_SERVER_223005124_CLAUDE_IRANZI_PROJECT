@@ -6,7 +6,7 @@ alwaysApply: true
 # PMRMS project conventions
 
 - Monorepo: `apps/api` (NestJS 11, Prisma 7, PostgreSQL), `apps/web` (Next.js 16, React 19, Tailwind 4), `packages/contracts` (Zod 4 schemas shared by both). Use pnpm, never npm/yarn.
-- Specs live in `docs/03`–`docs/08`. Read the relevant doc first; improve on it where it is weak, and update the doc when behaviour changes.
+- The README explains current behaviour and includes manual checks. Update the relevant sections when behaviour changes.
 - Request/response shapes are defined once in `packages/contracts` and imported by both apps. Never redeclare them.
 - Authorisation lives in the API (guards + service checks + DB constraints). The web UI may hide things but is never the security boundary.
 - Admins never read clinical content. Doctors only see actively assigned patients. Patients only see their own data.

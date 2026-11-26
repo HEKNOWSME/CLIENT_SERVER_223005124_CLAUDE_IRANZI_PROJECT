@@ -49,7 +49,7 @@ const patients = [
   { n: 10, name: 'David Fiction', birthDate: '1999-05-21', email: 'patient10@example.test' },
 ] as const;
 
-// docs/04 section 13.2. Expected counts: Common cold 3, Headache 2, Allergic rhinitis 2, Gastritis 2, Back pain 1.
+// Expected counts: Common cold 3, Headache 2, Allergic rhinitis 2, Gastritis 2, Back pain 1.
 const records = [
   { n: 1, patient: 1, doctor: 1, diagnosis: 'Common cold', date: '2026-01-12', description: 'Mild fever and congestion for three days. Rest, fluids and paracetamol advised.' },
   { n: 2, patient: 2, doctor: 1, diagnosis: 'Headache', date: '2026-02-04', description: 'Tension-type headache linked to screen time. Hydration and regular breaks advised.' },
