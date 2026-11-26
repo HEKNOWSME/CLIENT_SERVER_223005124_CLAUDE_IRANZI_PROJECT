@@ -9,7 +9,7 @@
     "dev": "pnpm --filter @pmrms/contracts build && pnpm --parallel --filter @pmrms/web --filter @pmrms/api run dev",
     "dev:web": "pnpm --filter @pmrms/web run dev",
     "dev:api": "pnpm --filter @pmrms/api run dev",
-    "build": "pnpm --filter @pmrms/contracts build && pnpm --filter @pmrms/api --filter @pmrms/web run build",
+    "build": "pnpm --filter @pmrms/web build && pnpm --filter @pmrms/api build",
     "typecheck": "pnpm --filter @pmrms/contracts build && pnpm --filter @pmrms/contracts --filter @pmrms/api --filter @pmrms/web run typecheck",
     "db:generate": "pnpm --filter @pmrms/api db:generate",
     "db:migrate": "pnpm --filter @pmrms/api db:migrate",
