@@ -37,7 +37,7 @@ const SECURITY: { icon: LucideIcon; title: string; text: string }[] = [
 const STEPS: { icon: LucideIcon; title: string; text: string }[] = [
   { icon: UserPlus, title: 'Create an account', text: 'Patients register directly. Doctors apply and wait for administrator approval.' },
   { icon: Link2, title: 'Get connected', text: 'An administrator assigns each patient to the doctors responsible for their care.' },
-  { icon: ClipboardList, title: 'Work with records', text: 'Doctors add and revise records; patients follow their history in real time.' },
+  { icon: ClipboardList, title: 'Work with records', text: 'Doctors add and revise records. Patients can follow their history and download reports.' },
 ];
 
 const PREVIEW = [

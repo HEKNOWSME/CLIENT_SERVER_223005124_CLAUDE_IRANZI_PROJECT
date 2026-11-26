@@ -16,12 +16,15 @@
     "db:migrate:dev": "pnpm --filter @pmrms/api db:migrate:dev",
     "db:status": "pnpm --filter @pmrms/api db:status",
     "db:seed": "pnpm --filter @pmrms/api db:seed",
+    "db:seed-report": "pnpm --filter @pmrms/api exec prisma db seed -- --report-only",
     "db:studio": "pnpm --filter @pmrms/api db:studio",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "setup:local": "pnpm run env:init && pnpm db:generate && pnpm db:migrate && pnpm db:seed",
     "test:smoke": "node --env-file=.env scripts/smoke.mjs",
-    "test:api": "pnpm --filter @pmrms/api run build && node --test apps/api/test/health.test.cjs"
+    "test:api": "pnpm --filter @pmrms/contracts build && pnpm --filter @pmrms/api run build && node --test apps/api/test/*.test.cjs",
+    "test:workspace": "pnpm --filter @pmrms/contracts build && pnpm --filter @pmrms/api run build && node --env-file=.env scripts/test-workspace.mjs",
+    "db:grant-runtime": "node --env-file=.env scripts/grant-runtime.mjs"
   },
   "devDependencies": { "typescript": "5.9.3" }
 }

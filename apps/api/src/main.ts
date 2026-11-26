@@ -33,4 +33,4 @@ async function bootstrap() {
   console.log(`API: http://${env.API_HOST}:${env.API_PORT}/v1/health`);
   console.log(`OpenAPI: http://${env.API_HOST}:${env.API_PORT}/docs`);
 }
-bootstrap().catch(() => { console.error('API failed to start. Check environment settings, database availability and port conflicts.'); process.exitCode = 1; });
+bootstrap().catch(() => { console.error('API failed to start. Check environment settings, database availability, hosted database permissions and port conflicts.'); process.exitCode = 1; });

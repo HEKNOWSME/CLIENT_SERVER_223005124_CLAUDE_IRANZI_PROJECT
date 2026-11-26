@@ -6,7 +6,7 @@ import {
   type RegistrationPending, type ResendOtpRequest, type VerifyEmailRequest,
 } from '@pmrms/contracts';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ApiError, apiRequest, CSRF_HEADERS, jsonBody } from './api';
+import { ApiError, apiBlob, apiRequest, CSRF_HEADERS, jsonBody } from './api';
 import { HOME_BY_ROLE } from './roles';
 
 type AuthState =
@@ -25,6 +25,7 @@ interface AuthContextValue {
   logoutAllDevices(): Promise<void>;
   /** Authenticated API call: attaches the access token and retries once after a refresh on 401. */
   authRequest<T>(path: string, init?: RequestInit, schema?: Parameters<typeof apiRequest<T>>[2]): Promise<T>;
+  authDownload(path: string): Promise<Blob>;
   reloadUser(): Promise<void>;
 }
 
@@ -109,8 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return applySession(session);
   }, [applySession]);
 
-  const authRequest = useCallback(async <T,>(path: string, init: RequestInit = {}, schema?: Parameters<typeof apiRequest<T>>[2]) => {
-    const send = (token: string) => apiRequest<T>(path, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` } }, schema);
+  const authorized = useCallback(async <T,>(send: (token: string) => Promise<T>) => {
     const token = accessToken.current ?? (await refresh())?.accessToken;
     if (!token) throw new ApiError(401, 'SESSION_EXPIRED', 'Your session has expired. Please sign in again.');
     try {
@@ -122,6 +122,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return send(renewed.accessToken);
     }
   }, [refresh]);
+
+  const authRequest = useCallback(<T,>(path: string, init: RequestInit = {}, schema?: Parameters<typeof apiRequest<T>>[2]) =>
+    authorized(token => {
+      const headers = new Headers(init.headers);
+      headers.set('Authorization', `Bearer ${token}`);
+      return apiRequest(path, { ...init, headers }, schema);
+    }), [authorized]);
+
+  const authDownload = useCallback((path: string) =>
+    authorized(token => apiBlob(path, { headers: { Authorization: `Bearer ${token}` } })), [authorized]);
 
   const reloadUser = useCallback(async () => {
     const user = await authRequest('/auth/me', {}, authUserSchema);
@@ -148,8 +158,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     },
     authRequest,
+    authDownload,
     reloadUser,
-  }), [state, startSession, clearSession, authRequest, reloadUser]);
+  }), [state, startSession, clearSession, authRequest, authDownload, reloadUser]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

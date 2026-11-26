@@ -233,6 +233,8 @@ Demo passwords come from `SEED_DEMO_PASSWORD` in the local `.env`, not from Git.
 | PATCH | `/admin/users/:id/status` | A | Activate / suspend |
 | GET | `/admin/doctors/pending` | A | Pending doctor requests |
 | PATCH | `/admin/doctors/:id/approval` | A | `{ "decision": "APPROVE" \| "REJECT" }` |
+| GET | `/admin/assignments` | A | Paginated active and revoked assignments |
+| GET | `/admin/assignment-options` | A | Eligible doctors and patients for the assignment form |
 | POST | `/admin/assignments` | A | Create ACTIVE assignment |
 | PATCH | `/admin/assignments/:id/revoke` | A | Soft-revoke (keep history) |
 | GET | `/admin/audit-logs` | A | Security metadata only |
@@ -256,16 +258,19 @@ IDs are `doctors.id` / `patients.id`, **not** `users.id`. Require APPROVED + ACT
 | GET | `/patients` | D | Assigned patients |
 | GET | `/patients/:id` | D or own P | Authorized patient detail |
 | GET | `/patients/:id/records` | D or own P | Authorized timeline |
-| GET | `/records` | D/P | Scoped list (`page`, `limit`, `diagnosis`, `from`, `to`, optional `patientId`) |
+| GET | `/records` | D/P | Scoped list (`page`, `limit`, `diagnosis`, `from`, `to`, `status`, optional `patientId`) |
 | POST | `/records` | D | Create for ACTIVE assigned patient |
 | GET | `/records/:id` | D/P | Detail + audit |
-| PATCH | `/records/:id` | D | Correct with `expectedVersion` |
-| PATCH | `/records/:id/archive` | D | Soft archive with version |
-| POST | `/records/:id/files` | D | Attach validated PDF |
+| PATCH | `/records/:id` | Author D | Correct with `expectedVersion` |
+| PATCH | `/records/:id/archive` | Author D | Soft archive with version |
+| GET | `/records/:id/files` | D/P | Scoped PDF metadata |
+| POST | `/records/:id/files` | Author D | Attach validated PDF |
 | GET | `/records/:id/files/:fileId/download` | D/P | Authorize, audit, stream PDF |
 | GET | `/records/:id/download` | D/P | Convenience: primary/sole file download |
 
 Filters apply **inside** authorization scope — never instead of it.
+
+The local demo stores PDFs in PostgreSQL and streams authorized downloads through NestJS. Cloudflare R2 and broadcast event delivery belong to the hosted design. Archived records remain available to authorized users through the archived list and detail view.
 
 **Create record**
 ```json

@@ -7,7 +7,7 @@
 
 PMRMS is a secure web application for creating, viewing, organizing, and downloading patient medical records. Approved doctors manage records for assigned patients; administrators manage accounts and assignments; patients review their own history and permitted PDF reports.
 
-> **Current milestone:** the full clinical database schema (with database-enforced integrity rules), seeded demo data and JWT authentication are implemented. Clinical record APIs, RLS, R2 storage and realtime features are next. See [`docs/`](docs/).
+> **Local academic demo:** sign in as an administrator, doctor or patient to exercise approvals, care assignments, record timelines and revisions, private PDF reports, diagnosis counts, notifications and audit logs using fictional data.
 
 ---
 
@@ -55,8 +55,8 @@ Full functional requirements and business rules live in [`docs/`](docs/).
 | ORM | Prisma 7 (`@prisma/adapter-pg`) | Models, migrations, queries |
 | Monorepo | pnpm workspaces | Build orchestration |
 | Auth | NestJS JWT (HS256) + rotating refresh cookie + Argon2id | Sessions and password hashing |
-| Storage *(planned)* | Cloudflare R2 | Private medical PDFs |
-| Realtime *(planned)* | Supabase Realtime Broadcast | Live UI signals |
+| Storage | PostgreSQL locally | Private PDF content served by the authenticated API |
+| Hosted integrations | Cloudflare R2 and Supabase | Private object storage, PostgreSQL and Broadcast |
 
 **Explicitly out of scope:** Better Auth, Django, Supabase Auth/Storage, payment integrations.
 
@@ -133,7 +133,7 @@ All routes are under `/v1` (or `/api` through the Next.js proxy). Every route re
 
 | Method | Route | Access | Result |
 | --- | --- | --- | --- |
-| POST | `/auth/register/patient` | Public | Creates an unverified patient and emails a Resend OTP (no session yet) |
+| POST | `/auth/register/patient` | Public | Creates an unverified patient and issues a six-digit OTP |
 | POST | `/auth/verify-email` | Public | Confirms the OTP and starts a session |
 | POST | `/auth/resend-otp` | Public | Resends the patient registration OTP (rate limited) |
 | POST | `/auth/register/doctor-request` | Public | Creates a PENDING doctor applicant (no clinical access) |
@@ -159,7 +159,7 @@ Security properties:
 | --- | --- | --- |
 | `admin.demo@example.test` | ADMIN / ACTIVE | Approvals and assignments |
 | `doctor.a@example.test` | DOCTOR / APPROVED | Primary clinical demo (patients 1, 2, 6, 10) |
-| `doctor.b@example.test` | DOCTOR / APPROVED | Shares patient 1 with Doctor A for the concurrent-edit demo |
+| `doctor.b@example.test` | DOCTOR / APPROVED | Shares patient 1 with Doctor A and can read its history |
 | `doctor.c@example.test` | DOCTOR / APPROVED | Not assigned to patient 1 (isolation test) |
 | `doctor.pending@example.test` | DOCTOR / PENDING | Signs in to a limited shell only |
 | `patient.a@example.test` | PATIENT / ACTIVE | Own records |
@@ -172,12 +172,17 @@ Security properties:
 | `/` | Landing page with live connection status |
 | `/login` | Sign in, then redirect to the role's workspace |
 | `/register` | Patient registration |
+| `/verify-email` | Confirm registration with a six-digit code |
 | `/doctor/apply` | Doctor application (account stays pending) |
 | `/admin`, `/doctor`, `/patient` | Role workspaces with role-specific navigation |
+| `/admin/users`, `/admin/doctors`, `/admin/assignments`, `/admin/audit-logs` | Account suspension, doctor review, care assignment and audit history |
+| `/doctor/patients`, `/doctor/records`, `/doctor/analytics` | Assigned patients, record management and diagnosis counts |
+| `/patient/records` | Own medical history and report downloads |
+| `/{role}/notifications` | Personal notification inbox |
 | `/admin/profile`, `/doctor/profile`, `/patient/profile` | Account details, sign out, sign out of all devices |
 | `/unauthorized` | Shown when a signed-in user opens another role's area |
 
-The browser keeps the access token in memory only and restores the session from the HttpOnly cookie after a reload. Token refreshes are serialised across tabs with the Web Locks API, so two tabs can never trigger refresh-token reuse detection. Signing out in one tab signs out every tab. Forms validate with the same Zod contracts as the API. Navigation for features that are not built yet is shown as disabled, and pending doctors see clinical items as locked. The UI is convenience only: every request is still authorised by the API.
+The browser keeps the access token in memory and restores the session from the HttpOnly cookie after a reload. Where available, the Web Locks API serializes token refreshes across tabs. Forms validate with the same Zod contracts as the API. Pending doctors can check their approval status from their workspace.
 
 Seeded rows use readable fixed IDs, for example patient 1 is `20000000-0000-4000-8000-000000000001` and record 1 is `40000000-0000-4000-8000-000000000001`.
 
@@ -226,6 +231,25 @@ pnpm dev
 
 Stop the apps with `Ctrl+C`. PostgreSQL keeps running as a service (or Docker container).
 
+### 6.1 Local demo walkthrough
+
+1. Sign in at http://localhost:3000 as `admin.demo@example.test`. Open **Doctor approvals** and **Assignments** to review applicants and connect a doctor to a patient.
+2. In a separate browser profile, sign in as `doctor.a@example.test`. Open **Patients** for assigned histories or **Records** to add a fictional entry. Open the entry to edit, archive or attach a PDF up to 10 MiB.
+3. Sign in as `patient.a@example.test`. Open **Medical history** and select the seeded **Common cold** entry to download the fictional report. The **Notifications** inbox lists updates and supports marking them read.
+4. To demonstrate concurrent edits, open the same record in two sessions for its author. Save one edit, then save the other. The second save returns `409 RECORD_VERSION_CONFLICT`. Use **Reload record** to fetch the saved version.
+
+All seeded accounts use the `SEED_DEMO_PASSWORD` in your local `.env`. On an existing demo database, `pnpm db:seed-report` adds the fictional PDF to record 1 while preserving account states and passwords.
+
+### 6.2 Enforce PostgreSQL RLS in the local API
+
+The clinical migration adds policies for records, PDFs and revisions. PostgreSQL applies those policies to a restricted API role. A table owner can still run migrations and seed fixtures.
+
+1. As your PostgreSQL administrator, create a separate login such as `pmrms_api` with a local password and no owner-role membership. For example, in `psql` run `CREATE ROLE pmrms_api LOGIN;` and then `\password pmrms_api`.
+2. In `.env`, set `DATABASE_MIGRATION_URL` to the existing owner connection string. Set `DATABASE_URL` to the same database using the new API login.
+3. Run `pnpm db:migrate`, then `pnpm db:grant-runtime`. Restart `pnpm dev`.
+
+The quick-start owner connection relies on NestJS authorization. Use the restricted login for an RLS demonstration. Each clinical transaction sets its actor from the verified session and PostgreSQL clears that context when the transaction ends.
+
 ---
 
 ## 7. Verification
@@ -235,9 +259,10 @@ With both apps running:
 ```powershell
 pnpm test:smoke     # frontend, proxy, database, CORS, OpenAPI and the full auth flow
 pnpm test:api       # readiness success / failure unit checks
+pnpm test:workspace # clinical workflows and RLS in an isolated PostgreSQL database
 ```
 
-For a quick manual check, `http://127.0.0.1:3001/v1/health` should report the database and seed as ready.
+For a quick manual check, `http://127.0.0.1:3001/v1/health` should report the database and seed as ready. `test:workspace` uses the local owner connection with permission to create a database and role. It creates and removes only its uniquely named test fixtures.
 
 ---
 
@@ -266,7 +291,9 @@ Styling uses Tailwind 4 theme tokens defined in `apps/web/app/globals.css`. Ever
 | `pnpm build` | Production build |
 | `pnpm db:migrate` | Apply committed migrations |
 | `pnpm db:seed` | Idempotent demo data (re-running resets demo account passwords and lockouts) |
+| `pnpm db:seed-report` | Add the fictional PDF to the existing first demo record |
 | `pnpm db:status` | Migration status |
+| `pnpm db:grant-runtime` | Grant table permissions to the separate API login |
 | `pnpm db:studio` | Prisma Studio GUI |
 | `pnpm db:up` / `pnpm db:down` | Start / stop optional Docker Postgres |
 
@@ -276,7 +303,7 @@ Environment notes:
 - `API_ORIGIN` must match the API host/port used by the Next.js proxy.
 - `WEB_ORIGIN` controls CORS and which origin may call the cookie endpoints.
 - `JWT_ACCESS_SECRET` and `REFRESH_TOKEN_PEPPER` must be different random values of 32+ characters; `pnpm env:init` generates them.
-- Patient registration emails a 6-digit OTP through Resend. Set `RESEND_API_KEY` and a verified `RESEND_FROM_EMAIL` in `.env`.
+- Set `OTP_DELIVERY=local` on a loopback development API to display registration codes on screen. To deliver by email, use `OTP_DELIVERY=resend` with `RESEND_API_KEY` and a verified `RESEND_FROM_EMAIL`. Existing environments default to Resend.
 - Restart `pnpm dev` after changing `.env`.
 
 ---
@@ -293,8 +320,9 @@ Environment notes:
 | [`docs/06-api-specification-and-backend-implementation.md`](docs/06-api-specification-and-backend-implementation.md) | REST contracts, Nest modules, DTOs, curl kit, tests |
 | [`docs/07-frontend-ui-ux-and-dashboard-design.md`](docs/07-frontend-ui-ux-and-dashboard-design.md) | Role dashboards, timeline UX, states, a11y, UI tests |
 | [`docs/08-testing-deployment-and-academic-presentation.md`](docs/08-testing-deployment-and-academic-presentation.md) | Tests, deployment, demos, presentation, evidence pack |
+| [`docs/09-hosted-integrations.md`](docs/09-hosted-integrations.md) | Supabase, Cloudflare R2 and Resend setup and verification |
 
-These documents are the feature baseline for upcoming milestones.
+These documents describe the full design. The local demo uses the setup and storage described in this README.
 
 ---
 
@@ -303,11 +331,11 @@ These documents are the feature baseline for upcoming milestones.
 | Stage | Status | Deliverable |
 | --- | --- | --- |
 | 0 — Local foundation | **Done** | Monorepo, PostgreSQL, Prisma, health checks, OpenAPI, shared UI component library |
-| 1 — Authentication | **Done** | JWT auth, rotating refresh sessions, Argon2id, roles, lockout, audit, patient email OTP (Resend), sign-in/registration UI and role workspaces |
-| 2 — Clinical domain | In progress | Schema, constraints and seed **done**; records, assignments and admin APIs next |
-| 3 — Authorization & RLS | Planned | NestJS guards + PostgreSQL row-level security |
-| 4 — Documents | Planned | Private R2 PDFs and signed download links |
-| 5 — Realtime & polish | Planned | Broadcast notifications, tests, demo deployment |
+| 1 — Authentication | **Done locally** | JWT auth, refresh sessions, role workspaces and patient OTP delivery |
+| 2 — Clinical domain | **Done locally** | Record timelines, versioned edits, archive, assignments, analytics and audit logs |
+| 3 — Authorization & RLS | **Done locally** | API authorization and PostgreSQL policies verified with a restricted role |
+| 4 — Documents | **Done locally** | Authenticated PDF upload and download using PostgreSQL |
+| 5 — Hosted demo | Integration code available | Supabase and R2 require provider setup and live verification |
 
 ---
 

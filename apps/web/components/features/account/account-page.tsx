@@ -7,6 +7,7 @@ import { describeError } from '../../../lib/api';
 import { useAuth } from '../../../lib/auth';
 import { Alert, Card, CardGrid, ConfirmAction, PageHeader } from '../../ui';
 import { AccountCard, SessionCard } from './account-cards';
+import { PatientProfileCard } from '../workspace/patient-profile';
 
 export function AccountPage() {
   const { state, reloadUser, logoutAllDevices } = useAuth();
@@ -39,6 +40,7 @@ export function AccountPage() {
         <AccountCard user={state.user} />
         <SessionCard expiresAt={state.expiresAt} />
       </CardGrid>
+      {state.user.role === 'PATIENT' && <PatientProfileCard />}
       <Card title="Sign out everywhere" description="Ends every session for this account, including other browsers and devices. Use this if you think someone else has access." className="mt-4 sm:mt-6">
         <ConfirmAction
           label="Sign out of all devices"

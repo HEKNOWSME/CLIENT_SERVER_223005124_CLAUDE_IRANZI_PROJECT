@@ -20,6 +20,25 @@ const networkError = () => new ApiError(0, 'NETWORK_ERROR', 'Cannot reach the se
 
 /** Calls the API through the same-origin `/api` proxy and unwraps the `{ data }` envelope. */
 export async function apiRequest<T>(path: string, init: RequestInit = {}, schema?: z.ZodType<T>): Promise<T> {
+  const response = await fetchApi(path, init);
+  if (response.status === 204) return undefined as T;
+  const body: unknown = await response.json().catch(() => null);
+  const data = (body as { data?: unknown } | null)?.data;
+  if (!schema) return data as T;
+  const parsed = schema.safeParse(data);
+  if (!parsed.success) throw new ApiError(response.status, 'UNEXPECTED_RESPONSE', 'The server returned an unexpected response.');
+  return parsed.data;
+}
+
+export async function apiBlob(path: string, init: RequestInit): Promise<Blob> {
+  const response = await fetchApi(path, init);
+  if (response.headers.get('content-type') !== 'application/pdf') {
+    throw new ApiError(response.status, 'UNEXPECTED_RESPONSE', 'The server did not return a PDF.');
+  }
+  return response.blob();
+}
+
+async function fetchApi(path: string, init: RequestInit): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(`/api${path}`, { cache: 'no-store', credentials: 'same-origin', ...init });
@@ -27,14 +46,8 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}, schema
     if ((error as Error).name === 'AbortError') throw error;
     throw networkError();
   }
-  if (response.status === 204) return undefined as T;
-  const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) throw toApiError(response, body);
-  const data = (body as { data?: unknown } | null)?.data;
-  if (!schema) return data as T;
-  const parsed = schema.safeParse(data);
-  if (!parsed.success) throw new ApiError(response.status, 'UNEXPECTED_RESPONSE', 'The server returned an unexpected response.');
-  return parsed.data;
+  if (!response.ok) throw toApiError(response, await response.json().catch(() => null));
+  return response;
 }
 
 export function jsonBody(body: unknown, headers: Record<string, string> = {}): RequestInit {

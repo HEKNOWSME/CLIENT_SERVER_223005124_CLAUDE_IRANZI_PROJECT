@@ -55,6 +55,7 @@ export function useZodForm<S extends z.ZodType, R>({ schema, read, validate, sub
     } catch (error) {
       if (error instanceof ApiError && error.code === 'VALIDATION_FAILED') setErrors(fieldErrors(error.details));
       setFormError(describeError(error));
+    } finally {
       setPending(false);
     }
   }

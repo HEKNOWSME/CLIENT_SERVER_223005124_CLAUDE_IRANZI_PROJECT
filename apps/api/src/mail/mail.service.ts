@@ -6,9 +6,10 @@ import { env, isProduction } from '../config';
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private readonly resend = new Resend(env.RESEND_API_KEY);
+  private readonly resend = env.OTP_DELIVERY === 'resend' ? new Resend(env.RESEND_API_KEY) : null;
 
   async sendRegistrationOtp(to: string, code: string, expiresInMinutes: number): Promise<void> {
+    if (!this.resend) return;
     const subject = 'Your PMRMS verification code';
     const html = `
       <div style="font-family:Segoe UI,Arial,sans-serif;line-height:1.5;color:#152f36;max-width:480px;margin:0 auto;padding:24px">
@@ -20,7 +21,7 @@ export class MailService {
     `;
 
     const { error } = await this.resend.emails.send({
-      from: env.RESEND_FROM_EMAIL,
+      from: env.RESEND_FROM_EMAIL!,
       to: [to],
       subject,
       html,

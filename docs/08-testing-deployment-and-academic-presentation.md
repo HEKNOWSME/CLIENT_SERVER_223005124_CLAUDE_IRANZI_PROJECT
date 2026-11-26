@@ -8,6 +8,8 @@
 
 > **Purpose:** Define how PMRMS is verified, deployed and presented. Only fictional patients, synthetic diagnoses and generated PDFs are used. This academic prototype is not certified for real clinical data.
 
+The [local demo instructions](../README.md#61-local-demo-walkthrough) cover PostgreSQL PDF storage and the durable notification inbox. Run `pnpm test:workspace` for the local clinical workflow and RLS checks. The release criteria below also cover the hosted design.
+
 ---
 
 ## 1. System under test
@@ -94,12 +96,12 @@ A build is ready for academic demonstration when:
 |---|---|---|
 | `admin.demo@example.test` | ADMIN / ACTIVE | Approvals and assignments |
 | `doctor.a@example.test` | DOCTOR / ACTIVE / APPROVED | Primary clinical demo |
-| `doctor.b@example.test` | DOCTOR / ACTIVE / APPROVED | Concurrent edit partner |
+| `doctor.b@example.test` | DOCTOR / ACTIVE / APPROVED | Assigned reader for patient 1 |
 | `doctor.pending@example.test` | DOCTOR / PENDING | Approval denial |
 | `patient.a@example.test` | PATIENT / ACTIVE | Own records |
 | `patient.b@example.test` | PATIENT / ACTIVE | Cross-patient denial |
 
-Seed ≥10 fictional patients, ≥10 records, ACTIVE assignments, and at least one generated PDF. For concurrency, assign **Doctor A and Doctor B** to the same patient. Publish exact demo IDs via seed output / README. Passwords come from local seed environment configuration — never commit production secrets.
+Seed ≥10 fictional patients, ≥10 records, ACTIVE assignments, and at least one generated PDF. To demonstrate a version conflict under the author-only editing rule, use two sessions for **Doctor A**. Publish exact demo IDs via seed output / README. Passwords come from local seed environment configuration — never commit production secrets.
 
 ---
 
@@ -167,11 +169,11 @@ it('conceals another patient record and logs denial', async () => {
 ## 6. Concurrency demonstration
 
 ```text
-Doctor A reads record R, version = 3
-Doctor B reads record R, version = 3
-Doctor A PATCH { expectedVersion: 3, ... }  → 200, version = 4
-Doctor B PATCH { expectedVersion: 3, ... }  → 409 RECORD_VERSION_CONFLICT
-Doctor B reloads and sees version 4
+Author session A reads the record at version 3
+Author session B reads the record at version 3
+Session A PATCH { expectedVersion: 3, ... }  → 200, version 4
+Session B PATCH { expectedVersion: 3, ... }  → 409 RECORD_VERSION_CONFLICT
+Session B reloads and sees version 4
 ```
 
 UI message: **“This record was updated by someone else. Refresh before editing.”**  
@@ -257,30 +259,30 @@ NODE_ENV=production
 API_HOST=0.0.0.0
 API_PORT=3001
 DATABASE_URL=
-DIRECT_URL=
-JWT_PRIVATE_KEY=
-JWT_PUBLIC_KEY=
-JWT_KEY_ID=
+JWT_ACCESS_SECRET=
 REFRESH_TOKEN_PEPPER=
 WEB_ORIGIN=https://<frontend-domain>
-API_ORIGIN=https://<api-domain>
+PDF_STORAGE=r2
 R2_ACCOUNT_ID=
 R2_BUCKET=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
 SUPABASE_URL=
-REALTIME_JWT_SIGNING_CONFIG=
+SUPABASE_PUBLISHABLE_KEY=
+SUPABASE_REALTIME_SIGNING_JWK=
+REALTIME_PROVIDER=supabase
+OTP_DELIVERY=resend
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=
 ```
 
-**Frontend (public values only)**
+**Frontend build**
 
 ```dotenv
-NEXT_PUBLIC_API_BASE_URL=https://<api-domain>
-NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+API_ORIGIN=https://<api-domain>
 ```
 
-Never place JWT signing material, R2 secrets, database passwords or privileged Supabase keys in `NEXT_PUBLIC_*` variables. Local development continues to use the root `.env` and Next rewrite to `/v1`.
+Use `DATABASE_MIGRATION_URL` in the separate migration environment. NestJS returns the publishable key and short-lived Realtime token to signed-in browsers. Keep signing material, R2 secrets, database passwords and Resend credentials in the API environment. See [hosted setup](09-hosted-integrations.md) for configuration and provider checks.
 
 ### 10.3 Deployment sequence
 

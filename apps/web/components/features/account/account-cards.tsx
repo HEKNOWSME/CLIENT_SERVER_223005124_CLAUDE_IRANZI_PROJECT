@@ -8,7 +8,8 @@ import { Badge, ButtonLink, Card, DescriptionList, type BadgeTone } from '../../
 
 export function AccountStatusBadge({ user }: { user: AuthUser }) {
   const tone: BadgeTone = user.status === 'SUSPENDED' ? 'danger' : isAwaitingApproval(user) ? 'warning' : 'success';
-  const label = user.status === 'SUSPENDED' ? 'Suspended' : isAwaitingApproval(user) ? 'Pending approval' : 'Active';
+  const label = user.status === 'SUSPENDED' ? 'Suspended' : user.doctorVerification === 'REJECTED' ? 'Declined'
+    : isAwaitingApproval(user) ? 'Pending approval' : 'Active';
   return <Badge tone={tone} dot>{label}</Badge>;
 }
 

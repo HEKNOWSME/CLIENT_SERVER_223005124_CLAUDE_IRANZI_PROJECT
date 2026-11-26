@@ -57,7 +57,7 @@ export class OtpService {
 
     return {
       expiresIn: env.OTP_TTL_MINUTES * 60,
-      ...(env.NODE_ENV !== 'production' ? { debugCode: code } : {}),
+      ...(env.OTP_DELIVERY === 'local' ? { debugCode: code } : {}),
     };
   }
 

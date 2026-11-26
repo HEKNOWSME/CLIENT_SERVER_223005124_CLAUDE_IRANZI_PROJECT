@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useAuth } from '../../lib/auth';
+import { describeError } from '../../lib/api';
+import { useWorkspaceRealtime } from '../../lib/realtime';
 import { cn } from '../../lib/cn';
 import { initials, isAwaitingApproval, NAV_BY_ROLE, ROLE_LABEL } from '../../lib/roles';
 import { Alert, Badge, Button, LoadingScreen } from '../ui';
@@ -16,11 +18,13 @@ import { Brand } from './brand';
  * still authorised by NestJS, so hiding UI is never the security boundary.
  */
 export function AppShell({ role, children }: { role: UserRole; children: ReactNode }) {
-  const { state, logout } = useAuth();
+  const { state, logout, reloadUser } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [approvalError, setApprovalError] = useState<string>();
+  useWorkspaceRealtime(state.status === 'authenticated' && state.user.role === role ? state.user.id : null);
 
   useEffect(() => {
     if (state.status === 'anonymous') {
@@ -78,7 +82,7 @@ export function AppShell({ role, children }: { role: UserRole; children: ReactNo
           <ul className="grid gap-1">
             {NAV_BY_ROLE[role].map(item => {
               const locked = !item.ready || (item.clinical && pending);
-              const active = pathname === item.href;
+              const active = pathname === item.href || (item.href !== `/${role.toLowerCase()}` && pathname.startsWith(item.href + '/'));
               const Icon = item.icon;
               const body = (
                 <>
@@ -131,7 +135,18 @@ export function AppShell({ role, children }: { role: UserRole; children: ReactNo
 
         {pending ? (
           <div className="px-4 pt-4 sm:px-6 lg:px-8">
-            <Alert tone="warning" title="Awaiting approval.">Your doctor account is pending administrator review. Clinical features stay locked until you are approved.</Alert>
+            {user.doctorVerification === 'REJECTED' ? (
+              <Alert tone="warning" title="Application declined">Contact your administrator if you have questions.</Alert>
+            ) : (
+              <Alert tone="warning" title="Awaiting approval">
+                <p>Your doctor account is pending administrator review.</p>
+                <Button className="mt-2" onClick={() => {
+                  setApprovalError(undefined);
+                  void reloadUser().catch(error => setApprovalError(describeError(error)));
+                }}>Check approval status</Button>
+                {approvalError && <p role="alert" className="mt-2">{approvalError}</p>}
+              </Alert>
+            )}
           </div>
         ) : null}
 

@@ -1,13 +1,15 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { hash } from '@node-rs/argon2';
+import { createHash } from 'node:crypto';
 import { passwordSchema } from '@pmrms/contracts';
 import { config } from 'dotenv';
 import { resolve } from 'node:path';
 import { ARGON2_OPTIONS } from '../src/auth/password.service';
 import { PrismaClient, type UserRole, type AccountStatus } from '../src/generated/prisma/client';
+import { demoReport } from './demo-report';
 
 config({ path: resolve(__dirname, '../../../.env'), quiet: true });
-const connectionString = process.env.DATABASE_URL;
+const connectionString = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
 if (!connectionString) throw new Error('DATABASE_URL is required. Run pnpm env:init.');
 if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEMO_SEED !== 'true') {
   throw new Error('Refusing to seed demo accounts in production. Set ALLOW_DEMO_SEED=true only for a disposable demo database.');
@@ -61,8 +63,7 @@ const records = [
   { n: 10, patient: 10, doctor: 1, diagnosis: 'Gastritis', date: '2026-08-15', description: 'Burning stomach pain worsened by spicy food. Antacid and follow-up visit.' },
 ] as const;
 
-// One ACTIVE assignment per authoring doctor/patient pair, plus Doctor B on patient 1 for the
-// concurrent-edit demo. Doctor C has no access to patient 1: the isolation test pair.
+// Doctor B shares patient 1 for the assigned reader demo. Doctor C has no access to patient 1.
 const assignments = [
   ...[...new Map(records.map(r => [`${r.doctor}-${r.patient}`, { doctor: r.doctor as number, patient: r.patient as number }])).values()],
   { doctor: 2, patient: 1 },
@@ -152,6 +153,8 @@ async function seed() {
     });
   }
 
+  await seedDemoReport();
+
   const [users, patientCount, doctorCount, recordCount, activeAssignments] = await Promise.all([
     prisma.user.count(), prisma.patient.count(), prisma.doctor.count(), prisma.medicalRecord.count(),
     prisma.doctorPatient.count({ where: { status: 'ACTIVE' } }),
@@ -165,7 +168,30 @@ async function seed() {
   console.log('All demo accounts use the SEED_DEMO_PASSWORD value from the root .env file.');
 }
 
-seed().catch(error => {
+async function seedDemoReport() {
+  const recordId = id(RECORD, 1);
+  const record = await prisma.medicalRecord.findFirst({
+    where: { id: recordId, patient: { user: { email: patients[0].email } }, doctor: { user: { email: doctors[0].email } } },
+    select: { id: true },
+  });
+  if (!record) throw new Error('The fictional demo record is missing. Run pnpm db:seed first.');
+  const content = demoReport();
+  const objectKey = 'local/seeded-fictional-report.pdf';
+  await prisma.medicalFile.upsert({
+    where: { objectKey },
+    create: {
+      recordId, objectKey, originalName: 'fictional-demo-report.pdf',
+      mimeType: 'application/pdf', sizeBytes: BigInt(content.length),
+      checksumSha256: createHash('sha256').update(content).digest('hex'), localContent: new Uint8Array(content),
+    },
+    update: {},
+  });
+}
+
+const task = process.argv.includes('--report-only')
+  ? seedDemoReport().then(() => console.log('Fictional demo PDF is ready on record 1.'))
+  : seed();
+task.catch(error => {
   console.error('Seed failed. Check the database and migrations.', error instanceof Error ? error.message : '');
   process.exitCode = 1;
 }).finally(() => prisma.$disconnect());

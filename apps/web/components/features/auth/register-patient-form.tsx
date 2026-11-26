@@ -24,7 +24,9 @@ export function RegisterPatientForm() {
     submit: registerPatient,
     onSuccess: pending => {
       const params = new URLSearchParams({ email: pending.email });
-      if (pending.debugCode) params.set('debug', pending.debugCode);
+      const key = `pmrms-local-otp:${pending.email}`;
+      if (pending.debugCode) sessionStorage.setItem(key, pending.debugCode);
+      else sessionStorage.removeItem(key);
       router.replace(`/verify-email?${params}`);
     },
   });

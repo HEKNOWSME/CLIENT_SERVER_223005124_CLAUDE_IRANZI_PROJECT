@@ -7,5 +7,5 @@ config({ path: resolve(__dirname, '../../.env'), quiet: true });
 export default defineConfig({
   schema: 'prisma/schema.prisma',
   migrations: { path: 'prisma/migrations', seed: 'ts-node prisma/seed.ts' },
-  datasource: { url: env('DATABASE_URL') },
+  datasource: { url: process.env.DATABASE_MIGRATION_URL || env('DATABASE_URL') },
 });

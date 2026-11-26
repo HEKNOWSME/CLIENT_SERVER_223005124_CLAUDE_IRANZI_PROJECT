@@ -15,10 +15,16 @@ export function VerifyEmailForm() {
   const router = useRouter();
   const params = useSearchParams();
   const email = (params.get('email') ?? '').trim().toLowerCase();
+  const debugKey = `pmrms-local-otp:${email}`;
+  const [debugCode, setDebugCode] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [resendError, setResendError] = useState<string | null>(null);
   const [resending, setResending] = useState(false);
   const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    setDebugCode(sessionStorage.getItem(debugKey));
+  }, [debugKey]);
 
   useEffect(() => {
     if (!cooldown) return;
@@ -30,7 +36,10 @@ export function VerifyEmailForm() {
     schema: verifyEmailRequestSchema,
     read: data => ({ email: data.get('email'), code: data.get('code') }),
     submit: verifyEmail,
-    onSuccess: user => router.replace(HOME_BY_ROLE[user.role]),
+    onSuccess: user => {
+      sessionStorage.removeItem(debugKey);
+      router.replace(HOME_BY_ROLE[user.role]);
+    },
   });
 
   async function onResend() {
@@ -40,7 +49,12 @@ export function VerifyEmailForm() {
     setInfo(null);
     try {
       const pending = await resendOtp({ email });
-      setInfo(pending.debugCode ? `A new code was sent. Local debug code: ${pending.debugCode}` : 'A new code was sent. Check your inbox.');
+      if (pending.debugCode) {
+        sessionStorage.setItem(debugKey, pending.debugCode);
+        setDebugCode(pending.debugCode);
+      } else {
+        setInfo('A new code was sent. Check your inbox.');
+      }
       setCooldown(60);
     } catch (error) {
       if (error instanceof ApiError && error.code === 'RATE_LIMITED' && error.retryAfterSeconds) setCooldown(error.retryAfterSeconds);
@@ -61,8 +75,8 @@ export function VerifyEmailForm() {
 
   return (
     <form onSubmit={form.onSubmit} noValidate className="grid gap-5">
-      <Alert tone="info">We sent a 6-digit code to <strong className="break-all">{email}</strong>. Enter it below to activate your account.</Alert>
-      {params.get('debug') ? <Alert tone="warning" title="Local debug code.">Development only: {params.get('debug')}</Alert> : null}
+      <Alert tone="info">Enter the 6-digit verification code for <strong className="break-all">{email}</strong>.</Alert>
+      {debugCode ? <Alert tone="warning" title="Local verification code">{debugCode}</Alert> : null}
       {info ? <Alert tone="success">{info}</Alert> : null}
       {form.formError ? <Alert tone="error">{form.formError}</Alert> : null}
       {resendError ? <Alert tone="error">{resendError}</Alert> : null}

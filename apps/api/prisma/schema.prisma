@@ -222,6 +222,7 @@ model MedicalFile {
   mimeType       String        @map("mime_type") @db.VarChar(100)
   sizeBytes      BigInt        @map("size_bytes")
   checksumSha256 String?       @map("checksum_sha256") @db.VarChar(64)
+  localContent   Bytes?        @map("local_content")
   uploadedById   String?       @map("uploaded_by_id") @db.Uuid
   uploadedBy     User?         @relation("FileUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
