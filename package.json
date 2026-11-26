@@ -26,5 +26,8 @@
     "test:workspace": "pnpm --filter @pmrms/contracts build && pnpm --filter @pmrms/api run build && node --env-file=.env scripts/test-workspace.mjs",
     "db:grant-runtime": "node --env-file=.env scripts/grant-runtime.mjs"
   },
-  "devDependencies": { "typescript": "5.9.3" }
+  "devDependencies": { 
+    "typescript": "5.9.3",
+    "@pmrms/contracts": "workspace:*"
+  }
 }

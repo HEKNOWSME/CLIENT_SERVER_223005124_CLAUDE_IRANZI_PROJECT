@@ -14,6 +14,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       max: env.DATABASE_POOL_MAX,
       connectionTimeoutMillis: 5000,
       idleTimeoutMillis: 30000,
+      ssl: {
+    rejectUnauthorized: true,
+    ca: Buffer.from(
+      process.env.DATABASE_SSL_CA!,
+      'base64',
+    ).toString('utf8'),
+  },
       ...(supabaseDatabase ? {} : { options: '-c statement_timeout=5000' }),
     }) });
   }
