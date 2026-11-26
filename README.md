@@ -42,7 +42,7 @@ The local `OTP_DELIVERY=local` setting prints codes in the API terminal for fict
 
 ### Demo accounts
 
-All local seeded accounts initially use the `SEED_DEMO_PASSWORD` value in the root `.env`.
+All local seeded accounts initially use the `SEED_DEMO_PASSWORD: Demo@Pmrms2026!` value in the root `.env`.
 
 | Account | Use in testing |
 | --- | --- |
