@@ -8,5 +8,8 @@ export { EmptyState } from './empty-state';
 export { FieldRow, PasswordField, TextField, inputClasses } from './field';
 export { IconTile } from './icon-tile';
 export { Eyebrow, PageHeader } from './page-header';
+export { DataTable, NavBadge, StatTile, type TableColumn } from './data';
+export { FilterBar, SearchSelect } from './filters';
+export { PdfViewer, Timeline } from './media';
 export { Section } from './section';
 export { LoadingScreen, Spinner } from './spinner';

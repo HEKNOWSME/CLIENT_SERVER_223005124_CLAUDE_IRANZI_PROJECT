@@ -7,13 +7,13 @@ alwaysApply: false
 # Web components: reuse first, never repeat
 
 ## Where things go
-- `components/ui/` – generic primitives (Button, ButtonLink, TextField, PasswordField, FieldRow, Alert, Badge, Card, CardGrid, PageHeader, Section, DescriptionList, IconTile, EmptyState, ConfirmAction, Spinner). Import from the barrel: `import { Button, Card } from '../../ui'`.
+- `components/ui/` – generic primitives (Button, ButtonLink, TextField, PasswordField, FieldRow, Alert, Badge, Card, CardGrid, PageHeader, Section, DescriptionList, IconTile, EmptyState, ConfirmAction, Spinner, DataTable, FilterBar, SearchSelect, StatTile, Timeline, PdfViewer, NavBadge). Import from the barrel: `import { Button, Card } from '../../ui'`.
 - `components/layout/` – page chrome (Brand, AppShell, AuthLayout/AuthCard, SiteHeader, SiteFooter, NoticePage).
 - `components/features/<domain>/` – domain components (auth forms, account cards, dashboard, later records/patients…).
 - `lib/` – non-visual logic: `api.ts`, `auth.tsx`, `forms.ts` (`useZodForm`), `roles.ts` (labels, nav, role helpers), `cn.ts`.
 - `app/**/page.tsx` stays thin: metadata + composing layout/feature components.
 
-Before writing markup, check `components/ui` and `components/layout`. If a pattern appears a second time, extract it there instead of copying it.
+Before writing markup, check `components/ui` and `components/layout`. Dense admin and clinical lists use `DataTable` (table from `md`, stacked rows on phones), `FilterBar`, and `SearchSelect`. Patient history prefers `Timeline`. PDFs open in `PdfViewer` from an authenticated blob, never a public URL. If a pattern appears a second time, extract it there instead of copying it.
 
 ## Styling
 - Tailwind utilities with the theme tokens from `app/globals.css` only: `bg-canvas`, `bg-surface`, `text-ink`, `text-muted`, `border-line`, `brand-*`, `warning-*`, `danger-*`, `shadow-card`, `shadow-pop`. No hex colours, no new CSS classes, no inline `style`.

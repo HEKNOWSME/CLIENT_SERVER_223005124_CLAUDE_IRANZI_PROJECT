@@ -11,7 +11,7 @@ export const recordQuery = pageQuery.extend({
   diagnosis: z.string().trim().min(1).max(255).optional(),
   from: z.iso.date().optional(),
   to: z.iso.date().optional(),
-  status: z.enum(['ACTIVE', 'ARCHIVED']).default('ACTIVE'),
+  status: z.enum(['ACTIVE', 'ARCHIVED']).optional(),
 }).refine(query => !query.from || !query.to || query.from <= query.to, {
   path: ['to'], message: 'End date must be on or after the start date.',
 });
@@ -79,9 +79,12 @@ export interface AuditRow {
 export interface InboxItem {
   id: string;
   title: string;
+  kind: 'RECORD_CREATED' | 'RECORD_UPDATED' | 'ASSIGNMENT_CHANGED' | 'ACCOUNT_STATUS_CHANGED' | 'GENERIC';
+  relatedResourceId: string | null;
   readAt: string | null;
   createdAt: string;
 }
+export interface UnreadCount { count: number }
 export interface DiagnosisCount { diagnosis: string; count: number }
 export interface RecordFile { id: string; originalName: string; sizeBytes: number }
 

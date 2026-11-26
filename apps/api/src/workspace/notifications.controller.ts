@@ -1,4 +1,4 @@
-import { Controller, Get, Header, HttpCode, Param, Patch, Query } from '@nestjs/common';
+import { Controller, Get, Header, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { idSchema, pageQuery } from '@pmrms/contracts';
 import type { z } from 'zod';
@@ -21,9 +21,25 @@ export class NotificationsController {
   async list(@CurrentUser() actor: AuthenticatedUser, @Query(new ZodValidationPipe(pageQuery)) query: z.output<typeof pageQuery>) {
     return { data: paged(await this.prisma.notification.findMany({
       where: { recipientUserId: actor.id },
-      select: { id: true, title: true, readAt: true, createdAt: true },
+      select: { id: true, title: true, kind: true, relatedResourceId: true, readAt: true, createdAt: true },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], ...pageArgs(query),
     }), query) };
+  }
+
+  @Get('unread-count')
+  @Header('Cache-Control', 'no-store')
+  async unread(@CurrentUser() actor: AuthenticatedUser) {
+    const count = await this.prisma.notification.count({ where: { recipientUserId: actor.id, readAt: null } });
+    return { data: { count } };
+  }
+
+  @Post('read-all')
+  @HttpCode(204)
+  async readAll(@CurrentUser() actor: AuthenticatedUser) {
+    await this.prisma.notification.updateMany({
+      where: { recipientUserId: actor.id, readAt: null },
+      data: { readAt: new Date() },
+    });
   }
 
   @Patch(':id/read')

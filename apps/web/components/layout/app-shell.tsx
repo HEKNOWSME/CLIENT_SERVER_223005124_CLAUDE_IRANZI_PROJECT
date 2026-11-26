@@ -10,8 +10,9 @@ import { describeError } from '../../lib/api';
 import { useWorkspaceRealtime } from '../../lib/realtime';
 import { cn } from '../../lib/cn';
 import { initials, isAwaitingApproval, NAV_BY_ROLE, ROLE_LABEL } from '../../lib/roles';
-import { Alert, Badge, Button, LoadingScreen } from '../ui';
+import { Alert, Badge, Button, LoadingScreen, NavBadge } from '../ui';
 import { Brand } from './brand';
+import { useUnreadNotifications } from '../../lib/notifications';
 
 /**
  * Layout and client-side gate for a role area. It only decides what to render: every API call is
@@ -25,6 +26,7 @@ export function AppShell({ role, children }: { role: UserRole; children: ReactNo
   const [signingOut, setSigningOut] = useState(false);
   const [approvalError, setApprovalError] = useState<string>();
   useWorkspaceRealtime(state.status === 'authenticated' && state.user.role === role ? state.user.id : null);
+  const unread = useUnreadNotifications(state.status === 'authenticated' && state.user.role === role);
 
   useEffect(() => {
     if (state.status === 'anonymous') {
@@ -88,6 +90,7 @@ export function AppShell({ role, children }: { role: UserRole; children: ReactNo
                 <>
                   <Icon className="size-5 shrink-0" aria-hidden="true" />
                   <span className="flex-1 truncate">{item.label}</span>
+                  {item.href.endsWith('/notifications') ? <NavBadge count={unread.count} /> : null}
                   {locked ? (
                     item.clinical && pending
                       ? <Lock className="size-4" aria-label="Locked until approval" />
